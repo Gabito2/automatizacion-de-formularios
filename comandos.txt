@@ -1,0 +1,5 @@
+correr backend: uvicorn app.main:app --reload
+correr frontend: npm run dev
+
+Usuario (DNI): 10000000
+Contraseña: admin123

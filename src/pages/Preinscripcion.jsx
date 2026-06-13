@@ -1,0 +1,770 @@
+import React, { useState } from 'react';
+import { authAPI } from '../services/api';
+import { 
+  GraduationCap, User, Lock, Mail, Phone, MapPin, 
+  Award, Calendar, FileText, CheckCircle2, 
+  AlertCircle, ArrowRight, ArrowLeft, Loader2, Sparkles 
+} from 'lucide-react';
+
+export default function Preinscripcion({ onBackToLogin }) {
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [progressMsg, setProgressMsg] = useState('');
+
+  // Paso 1: Datos Personales y de Cuenta
+  const [dni, setDni] = useState('');
+  const [nombre, setNombre] = useState('');
+  const [apellido, setApellido] = useState('');
+  const [email, setEmail] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Paso 2: Domicilio y Educación
+  const [direccion, setDireccion] = useState('');
+  const [localidad, setLocalidad] = useState('');
+  const [provincia, setProvincia] = useState('');
+  const [fechaNacimiento, setFechaNacimiento] = useState('');
+  const [secundarioCompleto, setSecundarioCompleto] = useState(true);
+  const [tituloSecundario, setTituloSecundario] = useState('');
+
+  // Paso 3: Carrera y Documentos
+  const [carrera, setCarrera] = useState('');
+  const [sede, setSede] = useState('');
+  const [dniFrente, setDniFrente] = useState(null);
+  const [dniDorso, setDniDorso] = useState(null);
+  const [fotoPersona, setFotoPersona] = useState(null);
+
+  // Previsualizaciones locales de imágenes
+  const [prevFrente, setPrevFrente] = useState('');
+  const [prevDorso, setPrevDorso] = useState('');
+  const [prevPersona, setPrevPersona] = useState('');
+
+  // Estado para la validación de DNI en tiempo real
+  const [analizandoDni, setAnalizandoDni] = useState(false);
+  const [datosExtraidadosDni, setDatosExtraidadosDni] = useState(null);
+  const [discrepanciasDni, setDiscrepanciasDni] = useState(null);
+
+  const normalizarTexto = (text) => {
+    if (!text) return '';
+    return text.toUpperCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Z0-9]/g, "")
+      .trim();
+  };
+
+  const comprobarDiscrepancias = (fields, formDni, formNombre, formApellido, formFechaNac) => {
+    const normOcrDni = normalizarTexto(fields.dni);
+    const normFormDni = normalizarTexto(formDni);
+    const dniMatch = normOcrDni === normFormDni || normOcrDni.includes(normFormDni) || normFormDni.includes(normOcrDni);
+
+    const normOcrNombre = normalizarTexto(fields.nombre);
+    const normFormNombre = normalizarTexto(formNombre);
+    const wordsOcrNombre = normOcrNombre.split(' ').filter(w => w.length > 2);
+    const wordsFormNombre = normFormNombre.split(' ').filter(w => w.length > 2);
+    const nameMatch = wordsOcrNombre.some(w => wordsFormNombre.includes(w)) || normOcrNombre === normFormNombre;
+
+    const normOcrApellido = normalizarTexto(fields.apellido);
+    const normFormApellido = normalizarTexto(formApellido);
+    const wordsOcrApellido = normOcrApellido.split(' ').filter(w => w.length > 2);
+    const wordsFormApellido = normFormApellido.split(' ').filter(w => w.length > 2);
+    const lastnameMatch = wordsOcrApellido.some(w => wordsFormApellido.includes(w)) || normOcrApellido === normFormApellido;
+
+    const dobMatch = fields.fecha_nacimiento === formFechaNac;
+
+    return {
+      dni: !dniMatch,
+      nombre: !nameMatch,
+      apellido: !lastnameMatch,
+      fecha_nacimiento: !dobMatch,
+      tieneDiscrepancia: !dniMatch || !nameMatch || !lastnameMatch || !dobMatch
+    };
+  };
+
+  React.useEffect(() => {
+    if (datosExtraidadosDni) {
+      const disc = comprobarDiscrepancias(
+        datosExtraidadosDni,
+        dni,
+        nombre,
+        apellido,
+        fechaNacimiento
+      );
+      setDiscrepanciasDni(disc);
+    } else {
+      setDiscrepanciasDni(null);
+    }
+  }, [dni, nombre, apellido, fechaNacimiento, datosExtraidadosDni]);
+
+
+  const analizarDniFrente = async (file) => {
+    setAnalizandoDni(true);
+    setDatosExtraidadosDni(null);
+    setDiscrepanciasDni(null);
+    setError('');
+    try {
+      const response = await authAPI.analizarDni(file);
+      if (response && response.extracted_fields) {
+        setDatosExtraidadosDni(response.extracted_fields);
+      }
+    } catch (err) {
+      console.error("Error al pre-analizar DNI:", err);
+    } finally {
+      setAnalizandoDni(false);
+    }
+  };
+
+  const handleFileChange = (e, type) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Validar extensión
+    const allowed = ['.jpg', '.jpeg', '.png', '.pdf'];
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    if (!allowed.includes(ext)) {
+      alert('Formato de archivo no permitido. Seleccione una imagen (.jpg, .png) o un PDF.');
+      return;
+    }
+
+    // Si es foto personal, forzar que sea imagen para detección de rostros
+    if (type === 'foto_persona' && ext === '.pdf') {
+      alert('La foto personal debe ser una imagen (.jpg, .jpeg, .png) para poder validar la biometría facial.');
+      return;
+    }
+
+    // Asignar archivo
+    if (type === 'dni_frente') {
+      setDniFrente(file);
+      if (ext !== '.pdf') {
+        setPrevFrente(URL.createObjectURL(file));
+        analizarDniFrente(file);
+      } else {
+        setPrevFrente('pdf');
+        setDatosExtraidadosDni(null);
+      }
+    } else if (type === 'dni_dorso') {
+      setDniDorso(file);
+      if (ext !== '.pdf') setPrevDorso(URL.createObjectURL(file));
+      else setPrevDorso('pdf');
+    } else if (type === 'foto_persona') {
+      setFotoPersona(file);
+      setPrevPersona(URL.createObjectURL(file));
+    }
+  };
+
+  const handleNextStep = () => {
+    setError('');
+    if (step === 1) {
+      if (!dni || !nombre || !apellido || !email || !telefono || !password || !confirmPassword) {
+        setError('Por favor complete todos los campos requeridos.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Las contraseñas no coinciden.');
+        return;
+      }
+      if (password.length < 6) {
+        setError('La contraseña debe tener al menos 6 caracteres.');
+        return;
+      }
+      setStep(2);
+    } else if (step === 2) {
+      if (!direccion || !localidad || !provincia || !fechaNacimiento || !tituloSecundario) {
+        setError('Por favor complete todos los campos sobre su domicilio y estudios.');
+        return;
+      }
+      setStep(3);
+    }
+  };
+
+  const handlePrevStep = () => {
+    setError('');
+    setStep(prev => prev - 1);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    
+    if (!carrera || !sede || !dniFrente || !dniDorso || !fotoPersona) {
+      setError('Por favor seleccione carrera/sede y cargue los 3 archivos solicitados.');
+      return;
+    }
+
+    setLoading(true);
+    setProgressMsg('Iniciando proceso de preinscripción...');
+
+    // Simular mensajes de progreso interactivos para el usuario
+    const timers = [
+      setTimeout(() => setProgressMsg('Guardando archivos en el legajo digital...'), 1200),
+      setTimeout(() => setProgressMsg('Procesando foto personal en búsqueda de rostros...'), 2800),
+      setTimeout(() => setProgressMsg('Validando datos del DNI con lector OCR...'), 4500),
+      setTimeout(() => setProgressMsg('Finalizando registro en base de datos...'), 6200),
+    ];
+
+    const formData = new FormData();
+    formData.append('dni', dni);
+    formData.append('nombre', nombre);
+    formData.append('apellido', apellido);
+    formData.append('email', email);
+    formData.append('carrera', carrera);
+    formData.append('sede', sede);
+    formData.append('telefono', telefono);
+    formData.append('direccion', direccion);
+    formData.append('localidad', localidad);
+    formData.append('provincia', provincia);
+    formData.append('fecha_nacimiento', fechaNacimiento);
+    formData.append('secundario_completo', secundarioCompleto ? 'true' : 'false');
+    formData.append('titulo_secundario', tituloSecundario);
+    formData.append('password', password);
+    formData.append('dni_frente', dniFrente);
+    formData.append('dni_dorso', dniDorso);
+    formData.append('foto_persona', fotoPersona);
+
+    try {
+      const res = await authAPI.register(formData);
+      // Cancelar simuladores si finaliza antes
+      timers.forEach(t => clearTimeout(t));
+      setSuccess(res.message || '¡Preinscripción realizada con éxito!');
+      // Redirigir después de 3 segundos
+      setTimeout(() => {
+        onBackToLogin();
+      }, 3500);
+    } catch (err) {
+      timers.forEach(t => clearTimeout(t));
+      setError(err.response?.data?.detail || 'Ocurrió un error inesperado al procesar tu preinscripción. Intente nuevamente.');
+    } finally {
+      setLoading(false);
+      setProgressMsg('');
+    }
+  };
+
+  const carrerasDisponibles = [
+    "Ingenieria en Sistemas",
+    "Licenciatura en Educacion",
+    "Abogacia",
+    "Sommelier",
+    "Licenciatura en Turismo",
+    "Licenciatura en Administracion"
+  ];
+
+  const sedesDisponibles = [
+    "Sede Centro",
+    "Sede Villa Union",
+    "Sede Los Sarmientos"
+  ];
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'linear-gradient(135deg, hsl(220, 85%, 15%) 0%, hsl(220, 85%, 25%) 50%, hsl(220, 85%, 35%) 100%)',
+      padding: '2rem 1rem',
+      position: 'relative',
+      overflowX: 'hidden',
+      fontFamily: 'sans-serif'
+    }}>
+      {/* Círculos decorativos de fondo */}
+      <div style={{
+        position: 'absolute',
+        top: '-10%',
+        left: '-10%',
+        width: '450px',
+        height: '450px',
+        borderRadius: '50%',
+        background: 'radial-gradient(circle, var(--accent-glow) 0%, transparent 70%)',
+        pointerEvents: 'none'
+      }}></div>
+      <div style={{
+        position: 'absolute',
+        bottom: '-10%',
+        right: '-10%',
+        width: '500px',
+        height: '500px',
+        borderRadius: '50%',
+        background: 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)',
+        pointerEvents: 'none'
+      }}></div>
+
+      <div className="card animate-fade-in-up" style={{
+        maxWidth: '700px',
+        width: '100%',
+        padding: '2.5rem',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+        border: 'none',
+        backgroundColor: 'rgba(255, 255, 255, 0.98)',
+        backdropFilter: 'blur(10px)',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        {/* Loader Overlay durante envío */}
+        {loading && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(255,255,255,0.95)',
+            zIndex: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 'var(--radius-lg)',
+            padding: '2rem',
+            textAlign: 'center'
+          }}>
+            <Loader2 className="spinner spinner-primary" style={{ width: '48px', height: '48px', marginBottom: '1.5rem' }} />
+            <h3 style={{ color: 'var(--primary)', fontWeight: 800, marginBottom: '0.5rem' }}>Procesando Preinscripción Inteligente</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '350px' }}>
+              {progressMsg}
+            </p>
+            <div style={{ width: '200px', height: '4px', backgroundColor: '#e2e8f0', borderRadius: '2px', overflow: 'hidden', marginTop: '1rem' }}>
+              <div style={{
+                height: '100%',
+                backgroundColor: 'var(--primary)',
+                width: progressMsg.includes('DNI') ? '75%' : progressMsg.includes('rostros') ? '50%' : progressMsg.includes('archivos') ? '25%' : '95%',
+                transition: 'width 0.8s ease-in-out'
+              }}></div>
+            </div>
+          </div>
+        )}
+
+        {/* Encabezado */}
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+          <div style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '56px',
+            height: '56px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: 'var(--primary-glow)',
+            color: 'var(--primary)',
+            marginBottom: '0.75rem'
+          }}>
+            <GraduationCap size={32} />
+          </div>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '-0.5px' }}>
+            Formulario de Preinscripción UNdeC
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            Acceso a Carreras de Educación Distancia y Virtual
+          </p>
+
+          {/* Indicador de pasos */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1.25rem' }}>
+            {[1, 2, 3].map((s) => (
+              <div 
+                key={s} 
+                style={{
+                  width: '32px',
+                  height: '6px',
+                  borderRadius: '3px',
+                  backgroundColor: s === step ? 'var(--primary)' : (s < step ? 'var(--success)' : '#e2e8f0'),
+                  transition: 'background-color 0.3s ease'
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="alert alert-danger" style={{ marginBottom: '1.5rem' }}>
+            <AlertCircle size={20} style={{ flexShrink: 0 }} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {success && (
+          <div className="alert alert-success" style={{ marginBottom: '1.5rem' }}>
+            <CheckCircle2 size={20} style={{ flexShrink: 0 }} />
+            <span>{success}</span>
+          </div>
+        )}
+
+        {/* PASO 1: DATOS PERSONALES Y CUENTA */}
+        {step === 1 && (
+          <div className="animate-fade-in">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <User size={18} /> Datos de Cuenta y Datos Personales
+            </h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-nombre">Nombre *</label>
+                <input id="reg-nombre" type="text" className="form-control" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej: Juan" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-apellido">Apellido *</label>
+                <input id="reg-apellido" type="text" className="form-control" value={apellido} onChange={(e) => setApellido(e.target.value)} placeholder="Ej: Perez" />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-dni">Número de DNI (sin puntos) *</label>
+                <input id="reg-dni" type="text" className="form-control" value={dni} onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))} placeholder="Ej: 45123456" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-tel">Teléfono de Contacto *</label>
+                <div style={{ position: 'relative' }}>
+                  <Phone size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input id="reg-tel" type="tel" className="form-control" style={{ paddingLeft: '2.5rem' }} value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="Ej: 3825123456" />
+                </div>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="reg-email">Correo Electrónico *</label>
+              <div style={{ position: 'relative' }}>
+                <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input id="reg-email" type="email" className="form-control" style={{ paddingLeft: '2.5rem' }} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Ej: juan.perez@correo.com" />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-pass">Contraseña de acceso *</label>
+                <div style={{ position: 'relative' }}>
+                  <Lock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input id="reg-pass" type="password" className="form-control" style={{ paddingLeft: '2.5rem' }} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-confirm">Confirmar Contraseña *</label>
+                <div style={{ position: 'relative' }}>
+                  <Lock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input id="reg-confirm" type="password" className="form-control" style={{ paddingLeft: '2.5rem' }} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Repita contraseña" />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={onBackToLogin}>
+                Volver al Login
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleNextStep} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                Siguiente <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 2: DOMICILIO Y EDUCACIÓN */}
+        {step === 2 && (
+          <div className="animate-fade-in">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MapPin size={18} /> Datos de Domicilio y Educación Secundaria
+            </h3>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="reg-nac">Fecha de Nacimiento *</label>
+              <div style={{ position: 'relative' }}>
+                <Calendar size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input id="reg-nac" type="date" className="form-control" style={{ paddingLeft: '2.5rem' }} value={fechaNacimiento} onChange={(e) => setFechaNacimiento(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="reg-dir">Domicilio Completo (Calle y Altura) *</label>
+              <input id="reg-dir" type="text" className="form-control" value={direccion} onChange={(e) => setDireccion(e.target.value)} placeholder="Ej: Av. Principal 123" />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-loc">Localidad *</label>
+                <input id="reg-loc" type="text" className="form-control" value={localidad} onChange={(e) => setLocalidad(e.target.value)} placeholder="Ej: Chilecito" />
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-prov">Provincia *</label>
+                <input id="reg-prov" type="text" className="form-control" value={provincia} onChange={(e) => setProvincia(e.target.value)} placeholder="Ej: La Rioja" />
+              </div>
+            </div>
+
+            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '1.5rem 0' }} />
+
+            <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input 
+                type="checkbox" 
+                id="reg-sec" 
+                checked={secundarioCompleto} 
+                onChange={(e) => setSecundarioCompleto(e.target.checked)} 
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+              <label htmlFor="reg-sec" className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>Poseo Secundario Completo</label>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="reg-tit">Título de Educación Secundaria Obtenido *</label>
+              <div style={{ position: 'relative' }}>
+                <Award size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input id="reg-tit" type="text" className="form-control" style={{ paddingLeft: '2.5rem' }} value={tituloSecundario} onChange={(e) => setTituloSecundario(e.target.value)} placeholder="Ej: Bachiller en Ciencias Sociales" />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={handlePrevStep} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <ArrowLeft size={16} /> Atrás
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleNextStep} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                Siguiente <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* PASO 3: CARRERA Y CARGA DOCUMENTAL */}
+        {step === 3 && (
+          <form onSubmit={handleSubmit} className="animate-fade-in">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <FileText size={18} /> Carrera de Destino y Validación Biométrica
+            </h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-carrera">Carrera a Preinscribirse *</label>
+                <select 
+                  id="reg-carrera" 
+                  className="form-control form-select" 
+                  value={carrera} 
+                  onChange={(e) => setCarrera(e.target.value)}
+                  required
+                >
+                  <option value="">Seleccione carrera</option>
+                  {carrerasDisponibles.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="reg-sede">Sede Académica *</label>
+                <select 
+                  id="reg-sede" 
+                  className="form-control form-select" 
+                  value={sede} 
+                  onChange={(e) => setSede(e.target.value)}
+                  required
+                >
+                  <option value="">Seleccione sede</option>
+                  {sedesDisponibles.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ backgroundColor: 'var(--primary-glow)', border: '1px solid var(--primary-light)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', fontSize: '0.8rem', color: 'var(--primary)' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontWeight: 600 }}>
+                <Sparkles size={16} /> Validación Biométrica y de DNI
+              </div>
+              <p style={{ margin: '0.25rem 0 0 0', color: 'var(--text-muted)' }}>
+                El backend procesará su **DNI frente** usando OCR para verificar la coincidencia con el DNI ingresado, y su **Foto personal** en búsqueda de rostros humanos para certificar su identidad.
+              </p>
+            </div>
+
+            {/* SECCIÓN DE SUBIDA DE ARCHIVOS */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '2rem' }}>
+              
+              {/* 1. DNI Frente */}
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>DNI Frente *</h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen frontal del DNI (JPG o PNG)</span>
+                  </div>
+                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                    {dniFrente ? 'Cambiar Archivo' : 'Cargar Archivo'}
+                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_frente')} />
+                  </label>
+                </div>
+                {prevFrente && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {prevFrente === 'pdf' ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600 }}>✓ PDF cargado ({dniFrente.name})</span>
+                    ) : (
+                      <img src={prevFrente} alt="DNI Frente" style={{ height: '60px', borderRadius: '4px', border: '1px solid var(--border-color)', objectFit: 'contain' }} />
+                    )}
+                  </div>
+                )}
+
+                {analizandoDni && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)', fontSize: '0.85rem' }}>
+                    <Loader2 className="spinner" size={16} />
+                    <span>Analizando imagen de DNI...</span>
+                  </div>
+                )}
+
+                {datosExtraidadosDni && discrepanciasDni && (
+                  <div style={{
+                    marginTop: '1rem',
+                    padding: '1rem',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid',
+                    borderColor: discrepanciasDni.tieneDiscrepancia ? '#fbd38d' : '#c6f6d5',
+                    backgroundColor: discrepanciasDni.tieneDiscrepancia ? '#fffaf0' : '#f0fff4',
+                    fontSize: '0.85rem'
+                  }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', color: discrepanciasDni.tieneDiscrepancia ? '#dd6b20' : '#38a169', display: 'flex', alignItems: 'center', gap: '0.25rem', fontWeight: 700 }}>
+                      {discrepanciasDni.tieneDiscrepancia ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+                      {discrepanciasDni.tieneDiscrepancia ? 'Los datos no coinciden' : 'Datos del DNI coinciden'}
+                    </h4>
+                    <p style={{ margin: '0 0 1rem 0', color: 'var(--text-muted)' }}>
+                      {discrepanciasDni.tieneDiscrepancia 
+                        ? 'Se detectaron discrepancias entre los datos ingresados y los de la foto del DNI. Por favor, corrígelos:' 
+                        : 'Los datos leídos del DNI coinciden perfectamente con los ingresados.'}
+                    </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>DNI:</span>
+                        <span style={{ textDecoration: discrepanciasDni.dni ? 'line-through' : 'none', color: discrepanciasDni.dni ? '#e53e3e' : 'inherit' }}>
+                          {dni || '(Vacío)'}
+                        </span>
+                        <span style={{ color: '#2f855a', fontWeight: 600 }}>
+                          {datosExtraidadosDni.dni || '(No detectado)'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>Nombre:</span>
+                        <span style={{ textDecoration: discrepanciasDni.nombre ? 'line-through' : 'none', color: discrepanciasDni.nombre ? '#e53e3e' : 'inherit' }}>
+                          {nombre || '(Vacío)'}
+                        </span>
+                        <span style={{ color: '#2f855a', fontWeight: 600 }}>
+                          {datosExtraidadosDni.nombre || '(No detectado)'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>Apellido:</span>
+                        <span style={{ textDecoration: discrepanciasDni.apellido ? 'line-through' : 'none', color: discrepanciasDni.apellido ? '#e53e3e' : 'inherit' }}>
+                          {apellido || '(Vacío)'}
+                        </span>
+                        <span style={{ color: '#2f855a', fontWeight: 600 }}>
+                          {datosExtraidadosDni.apellido || '(No detectado)'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: '0.5rem', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>Fecha Nac.:</span>
+                        <span style={{ textDecoration: discrepanciasDni.fecha_nacimiento ? 'line-through' : 'none', color: discrepanciasDni.fecha_nacimiento ? '#e53e3e' : 'inherit' }}>
+                          {fechaNacimiento || '(Vacío)'}
+                        </span>
+                        <span style={{ color: '#2f855a', fontWeight: 600 }}>
+                          {datosExtraidadosDni.fecha_nacimiento || '(No detectado)'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {discrepanciasDni.tieneDiscrepancia && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '1px solid #e2e8f0', paddingTop: '1rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          style={{ width: '100%' }}
+                          onClick={() => {
+                            if (datosExtraidadosDni.dni) setDni(datosExtraidadosDni.dni);
+                            if (datosExtraidadosDni.nombre) setNombre(datosExtraidadosDni.nombre);
+                            if (datosExtraidadosDni.apellido) setApellido(datosExtraidadosDni.apellido);
+                            if (datosExtraidadosDni.fecha_nacimiento) setFechaNacimiento(datosExtraidadosDni.fecha_nacimiento);
+                          }}
+                        >
+                          Corregir formulario con datos del DNI
+                        </button>
+                        
+                        <div>
+                          <p style={{ fontWeight: 600, fontSize: '0.75rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>O edita manualmente aquí:</p>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                              <label className="form-label" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Nombre</label>
+                              <input type="text" className="form-control form-control-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} value={nombre} onChange={(e) => setNombre(e.target.value)} />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                              <label className="form-label" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Apellido</label>
+                              <input type="text" className="form-control form-control-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} value={apellido} onChange={(e) => setApellido(e.target.value)} />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                              <label className="form-label" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>DNI</label>
+                              <input type="text" className="form-control form-control-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} value={dni} onChange={(e) => setDni(e.target.value.replace(/\D/g, ''))} />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                              <label className="form-label" style={{ fontSize: '0.7rem', marginBottom: '2px' }}>Fecha Nacimiento</label>
+                              <input type="date" className="form-control form-control-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} value={fechaNacimiento} onChange={(e) => setFechaNacimiento(e.target.value)} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. DNI Dorso */}
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>DNI Dorso *</h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen trasera del DNI (JPG o PNG)</span>
+                  </div>
+                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                    {dniDorso ? 'Cambiar Archivo' : 'Cargar Archivo'}
+                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_dorso')} />
+                  </label>
+                </div>
+                {prevDorso && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {prevDorso === 'pdf' ? (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600 }}>✓ PDF cargado ({dniDorso.name})</span>
+                    ) : (
+                      <img src={prevDorso} alt="DNI Dorso" style={{ height: '60px', borderRadius: '4px', border: '1px solid var(--border-color)', objectFit: 'contain' }} />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Foto Personal / Rostro */}
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>Foto de Rostro (Foto Carnet/Selfie) *</h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Debe ser una foto clara de frente de su cara (JPG, PNG)</span>
+                  </div>
+                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                    {fotoPersona ? 'Cambiar Foto' : 'Cargar Foto'}
+                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png" onChange={(e) => handleFileChange(e, 'foto_persona')} />
+                  </label>
+                </div>
+                {prevPersona && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <img src={prevPersona} alt="Rostro" style={{ height: '60px', width: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fotoPersona.name}</span>
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '2rem' }}>
+              <button type="button" className="btn btn-secondary" onClick={handlePrevStep}>
+                Atrás
+              </button>
+              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                Finalizar Preinscripción <CheckCircle2 size={16} />
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
