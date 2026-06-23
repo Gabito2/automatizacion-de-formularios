@@ -1,0 +1,64 @@
+# =====================================================================
+# REQUERIMIENTOS DEL BACKEND - Sistema de Legajos Digitales UNdeC
+# =====================================================================
+# Instalación: pip install -r requirements.txt
+# Nota: easyocr descarga modelos de ~200MB la primera vez que se usa.
+# =====================================================================
+
+# --- API y servidor web ---
+fastapi==0.136.1
+uvicorn==0.47.0
+python-multipart==0.0.29
+starlette==1.0.0
+
+# --- Base de datos ---
+SQLAlchemy==2.0.49
+greenlet==3.5.1
+
+# --- Autenticación y seguridad ---
+passlib==1.7.4
+bcrypt==5.0.0
+PyJWT==2.12.1
+
+# --- Validación de datos ---
+pydantic==2.13.4
+pydantic_core==2.46.4
+annotated-types==0.7.0
+email-validator==2.3.0
+
+# --- Procesamiento de imágenes (OCR y detección facial) ---
+opencv-python==4.13.0.92       # Procesamiento de imágenes base
+Pillow==12.2.0                  # Manejo de formatos de imagen
+numpy==2.4.6                    # Operaciones matriciales para visión
+
+# Motor OCR primario (no requiere instalación de ejecutables externos)
+easyocr>=1.7.0                  # OCR con soporte español/inglés + modelos deep learning
+
+# Motor OCR secundario/fallback (requiere instalar Tesseract-OCR por separado)
+pytesseract==0.3.13             # Wrapper Python para Tesseract-OCR
+
+# Detección facial mejorada (primario)
+mediapipe>=0.10.0               # Detector facial MediaPipe de Google (pip install, sin ejecutables)
+
+# --- Importación de datos (Excel/CSV) ---
+pandas==3.0.3
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+
+# --- Email ---
+# (Las dependencias de email están incluidas en fastapi/starlette)
+
+# --- Utilidades ---
+anyio==4.13.0
+click==8.4.0
+colorama==0.4.6
+dnspython==2.8.0
+h11==0.16.0
+idna==3.15
+packaging==26.2
+python-dateutil==2.9.0.post0
+six==1.17.0
+typing_extensions==4.15.0
+typing-inspection==0.4.2
+tzdata==2026.2
+annotated-doc==0.0.4

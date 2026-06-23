@@ -54,6 +54,16 @@ export const authAPI = {
     });
     return response.data;
   },
+  analizarFoto: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/auth/analizar-foto', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };
 
 export const estudianteAPI = {

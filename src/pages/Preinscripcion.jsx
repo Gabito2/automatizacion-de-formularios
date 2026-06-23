@@ -47,6 +47,10 @@ export default function Preinscripcion({ onBackToLogin }) {
   const [datosExtraidadosDni, setDatosExtraidadosDni] = useState(null);
   const [discrepanciasDni, setDiscrepanciasDni] = useState(null);
 
+  // Estado para la validación de foto personal en tiempo real
+  const [analizandoFoto, setAnalizandoFoto] = useState(false);
+  const [resultadoFoto, setResultadoFoto] = useState(null); // { has_face, confidence, message }
+
   const normalizarTexto = (text) => {
     if (!text) return '';
     return text.toUpperCase()
@@ -117,6 +121,21 @@ export default function Preinscripcion({ onBackToLogin }) {
     }
   };
 
+  const analizarFotoPersona = async (file) => {
+    setAnalizandoFoto(true);
+    setResultadoFoto(null);
+    try {
+      const response = await authAPI.analizarFoto(file);
+      setResultadoFoto(response);
+    } catch (err) {
+      console.error("Error al pre-analizar foto personal:", err);
+      // Si hay error en el servidor, no bloqueamos pero informamos
+      setResultadoFoto({ has_face: null, confidence: 0, message: 'No se pudo validar la foto en este momento.' });
+    } finally {
+      setAnalizandoFoto(false);
+    }
+  };
+
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -152,6 +171,8 @@ export default function Preinscripcion({ onBackToLogin }) {
     } else if (type === 'foto_persona') {
       setFotoPersona(file);
       setPrevPersona(URL.createObjectURL(file));
+      // Validar rostro en tiempo real
+      analizarFotoPersona(file);
     }
   };
 
@@ -192,6 +213,12 @@ export default function Preinscripcion({ onBackToLogin }) {
     
     if (!carrera || !sede || !dniFrente || !dniDorso || !fotoPersona) {
       setError('Por favor seleccione carrera/sede y cargue los 3 archivos solicitados.');
+      return;
+    }
+
+    // Bloquear envío si la validación de foto detectó explícitamente que no hay rostro
+    if (resultadoFoto && resultadoFoto.has_face === false) {
+      setError('La foto personal no pasó la validación: no se detectó un rostro humano. Por favor cambie la foto e intente nuevamente.');
       return;
     }
 
@@ -733,7 +760,7 @@ export default function Preinscripcion({ onBackToLogin }) {
               </div>
 
               {/* 3. Foto Personal / Rostro */}
-              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
+              <div style={{ border: `1px solid ${resultadoFoto && resultadoFoto.has_face === false ? '#fc8181' : 'var(--border-color)'}`, borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white', transition: 'border-color 0.3s ease' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>Foto de Rostro (Foto Carnet/Selfie) *</h4>
@@ -745,9 +772,40 @@ export default function Preinscripcion({ onBackToLogin }) {
                   </label>
                 </div>
                 {prevPersona && (
-                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <img src={prevPersona} alt="Rostro" style={{ height: '60px', width: '60px', borderRadius: '50%', border: '1px solid var(--border-color)', objectFit: 'cover' }} />
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fotoPersona.name}</span>
+                  <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <img src={prevPersona} alt="Rostro" style={{ height: '64px', width: '64px', borderRadius: '50%', border: `2px solid ${resultadoFoto ? (resultadoFoto.has_face ? '#68d391' : resultadoFoto.has_face === false ? '#fc8181' : '#e2e8f0') : '#e2e8f0'}`, objectFit: 'cover', transition: 'border-color 0.3s ease' }} />
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block' }}>{fotoPersona.name}</span>
+
+                      {/* Estado de análisis facial */}
+                      {analizandoFoto && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem', color: 'var(--primary)', fontSize: '0.8rem' }}>
+                          <Loader2 className="spinner" size={14} />
+                          <span>Analizando rostro...</span>
+                        </div>
+                      )}
+
+                      {!analizandoFoto && resultadoFoto && (
+                        <div style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.4rem',
+                          marginTop: '0.4rem',
+                          padding: '0.25rem 0.6rem',
+                          borderRadius: '999px',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          backgroundColor: resultadoFoto.has_face === true ? '#f0fff4' : resultadoFoto.has_face === false ? '#fff5f5' : '#fffff0',
+                          color: resultadoFoto.has_face === true ? '#276749' : resultadoFoto.has_face === false ? '#c53030' : '#744210',
+                          border: `1px solid ${resultadoFoto.has_face === true ? '#9ae6b4' : resultadoFoto.has_face === false ? '#fc8181' : '#f6e05e'}`,
+                        }}>
+                          {resultadoFoto.has_face === true && <CheckCircle2 size={13} />}
+                          {resultadoFoto.has_face === false && <AlertCircle size={13} />}
+                          {resultadoFoto.has_face === null && <AlertCircle size={13} />}
+                          <span>{resultadoFoto.message}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

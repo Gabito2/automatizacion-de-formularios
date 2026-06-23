@@ -1,5 +1,6 @@
 import os
 import shutil
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -176,6 +177,62 @@ def analizar_dni(
         if os.path.exists(prep_path):
             os.remove(prep_path)
 
+
+@router.post("/analizar-foto")
+def analizar_foto(
+    file: UploadFile = File(...),
+):
+    """
+    Recibe una imagen de foto personal (selfie/carnet) y verifica si contiene
+    un rostro humano visible. Usado para validación previa en el formulario
+    de preinscripción antes del envío final.
+    """
+    allowed_extensions = {".jpg", ".jpeg", ".png"}
+    filename = file.filename
+    _, ext = os.path.splitext(filename)
+    ext = ext.lower()
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de archivo no permitido. Solo se aceptan imágenes JPG y PNG."
+        )
+
+    # Guardar temporalmente para que FaceService pueda leerlo
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+
+    temp_path = os.path.join(temp_dir, f"temp_face_{random.randint(1000, 9999)}{ext}")
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        face_result = FaceService.detect_face(temp_path)
+
+        if face_result.get("has_face"):
+            message = (
+                f"Rostro detectado correctamente (confianza: {face_result['confidence']:.0%})."
+            )
+        else:
+            message = "No se detectó un rostro humano visible en la imagen. Asegúrese de que su cara esté centrada y bien iluminada."
+
+        return {
+            "has_face": face_result["has_face"],
+            "face_count": face_result["face_count"],
+            "confidence": face_result["confidence"],
+            "method_used": face_result.get("method_used", "unknown"),
+            "message": message,
+            "error": face_result.get("error")
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al analizar la foto: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 @router.post("/register")
 def register_student(
     dni: str = Form(...),
@@ -245,6 +302,7 @@ def register_student(
     # 4. Validación Facial en la foto personal (Selfie)
     # Debe ser una imagen para poder correr la detección facial
     _, persona_ext = os.path.splitext(foto_persona.filename)
+    face_check = {"has_face": False, "confidence": 0.0, "method_used": "none"}
     if persona_ext.lower() in allowed_extensions:
         face_check = FaceService.detect_face(absolute_persona)
         if not face_check.get("has_face"):
@@ -253,13 +311,19 @@ def register_student(
                 shutil.rmtree(user_dir)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Detección facial fallida: No se encontró un rostro humano visible en la foto de perfil subida."
+                detail=(
+                    "Detección facial fallida: No se encontró un rostro humano visible en la foto de perfil subida. "
+                    "Asegúrese de que su cara esté centrada, bien iluminada y sin obstrucciones."
+                )
             )
 
     # 5. Validación OCR del DNI Frente
-    # Debe ser una imagen para procesar con OCR de OpenCV
     _, frente_ext = os.path.splitext(dni_frente.filename)
     ocr_results = None
+    quality_report = None
+    ocr_dni_observado = False
+    ocr_observacion_msg = None
+
     if frente_ext.lower() in allowed_extensions:
         user_info = {
             "dni": dni,
@@ -270,20 +334,25 @@ def register_student(
         try:
             extracted_text, quality_report = OCRService.extract_text(absolute_frente, user_info)
             ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
-            
-            # Verificar si coincide el número de DNI
-            if not ocr_results.get("dni_match"):
-                if os.path.exists(user_dir):
-                    shutil.rmtree(user_dir)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="El DNI extraído del documento frontal no coincide con el DNI ingresado en el formulario."
-                )
-        except HTTPException:
-            raise
+
+            if quality_report and (quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright")):
+                # Imagen de baja calidad → observado para revisión manual
+                ocr_dni_observado = True
+                ocr_observacion_msg = "El sistema detectó baja calidad en la imagen del DNI (borrosa o con mala iluminación). Requiere revisión manual."
+            elif ocr_results and not ocr_results.get("overall_match"):
+                # Datos no coinciden o texto vacío → observado para revisión manual
+                ocr_dni_observado = True
+                if ocr_results.get("text_empty"):
+                    ocr_observacion_msg = "No se pudo extraer texto del DNI (imagen ilegible). El documento requiere revisión manual."
+                elif not ocr_results.get("dni_match"):
+                    ocr_observacion_msg = "El número de DNI extraído del documento no coincide con el DNI declarado en el formulario. Requiere revisión manual."
+                else:
+                    ocr_observacion_msg = "Los datos extraídos del DNI no coinciden completamente con los ingresados. Requiere revisión manual."
         except Exception as e:
-            # En caso de error crítico de OCR (por ejemplo, Tesseract roto), dejamos registrar si la foto de persona es válida
-            pass
+            logger_auth = logging.getLogger("AuthRouter")
+            logger_auth.warning(f"Error en OCR durante registro: {e}")
+            ocr_dni_observado = True
+            ocr_observacion_msg = "Error al procesar el DNI automáticamente. Requiere revisión manual."
 
     # 6. Registrar en la base de datos
     try:
@@ -319,11 +388,23 @@ def register_student(
         db.add(datos_pers)
 
         # C. Registrar Documentos en DB
+        # Estado del DNI frente según resultado OCR
+        if ocr_results and ocr_results.get("overall_match"):
+            estado_frente = "aprobado"
+            obs_frente = None
+        elif ocr_dni_observado:
+            estado_frente = "observado"
+            obs_frente = ocr_observacion_msg
+        else:
+            estado_frente = "pendiente"
+            obs_frente = None
+
         doc_frente = Documento(
             usuario_id=new_user.id,
             tipo_documento="dni_frente",
             archivo_url=saved_frente,
-            estado="aprobado" if (ocr_results and ocr_results.get("overall_match")) else "pendiente"
+            estado=estado_frente,
+            observacion=obs_frente
         )
         db.add(doc_frente)
 
@@ -335,16 +416,34 @@ def register_student(
         )
         db.add(doc_dorso)
 
+        # Estado de la foto personal según confianza del detector facial
+        confidence = face_check.get("confidence", 0.0)
+        estado_foto = "aprobado" if confidence >= 0.5 else "pendiente"
+        obs_foto = None if confidence >= 0.5 else f"Detección facial con baja confianza ({confidence:.0%}). Requiere revisión manual."
+
         doc_persona = Documento(
             usuario_id=new_user.id,
             tipo_documento="foto_4x4",
             archivo_url=saved_persona,
-            estado="aprobado"  # validado previamente en la detección facial
+            estado=estado_foto,
+            observacion=obs_foto
         )
         db.add(doc_persona)
 
         db.commit()
-        return {"message": "Preinscripción realizada con éxito. Ahora puede iniciar sesión con su DNI y contraseña."}
+
+        # Mensaje de respuesta según estado de validaciones
+        warnings = []
+        if ocr_dni_observado:
+            warnings.append("El DNI frontal quedó marcado para revisión manual.")
+        if estado_foto == "pendiente":
+            warnings.append("La foto personal quedó marcada para revisión manual.")
+
+        msg = "Preinscripción realizada con éxito. Ahora puede iniciar sesión con su DNI y contraseña."
+        if warnings:
+            msg += " Nota: " + " ".join(warnings)
+
+        return {"message": msg}
 
     except Exception as ex:
         db.rollback()
