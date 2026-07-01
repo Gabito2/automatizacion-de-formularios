@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { estudianteAPI } from '../services/api';
+import CameraCapture from '../components/CameraCapture';
 import { 
   User, FileText, UploadCloud, AlertCircle, CheckCircle2, 
   Clock, LogOut, Calendar, Phone, MapPin, Award, 
-  Loader2, RefreshCw, HelpCircle, Eye, GraduationCap
+  Loader2, RefreshCw, HelpCircle, Eye, GraduationCap, Camera
 } from 'lucide-react';
 
 export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
@@ -31,6 +32,9 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
 
   // Reporte OCR en tiempo real de la subida actual
   const [ocrFeedback, setOcrFeedback] = useState(null);
+
+  // Control de modal de cámara
+  const [camaraDocumento, setCamaraDocumento] = useState(null); // tipo_documento | null
 
   // Estados para corrección de datos del DNI
   const [corrigiendoDatosDni, setCorrigiendoDatosDni] = useState(false);
@@ -204,6 +208,30 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
       await cargarInformacion();
     } catch (err) {
       setGeneralError(err.response?.data?.detail || 'Error al subir el documento de legajo.');
+    } finally {
+      setSubiendoDoc(null);
+    }
+  };
+
+  // Subir documento capturado desde cámara
+  const handleCamaraUpload = async (blob, dataUrl, tipo_documento) => {
+    setCamaraDocumento(null);
+    setSubiendoDoc(tipo_documento);
+    setOcrFeedback(null);
+    setGeneralError('');
+    try {
+      const response = await estudianteAPI.uploadDocumentoCamara(tipo_documento, dataUrl, 'camara.jpg');
+      if (response.ocr_analizado && response.ocr_resultados) {
+        setOcrFeedback({
+          tipo: tipo_documento,
+          resultados: response.ocr_resultados,
+          datos_extraidos: response.ocr_datos_extraidos,
+          calidad: response.calidad_reporte
+        });
+      }
+      await cargarInformacion();
+    } catch (err) {
+      setGeneralError(err.response?.data?.detail || 'Error al subir la captura de cámara.');
     } finally {
       setSubiendoDoc(null);
     }
@@ -640,17 +668,30 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
                               )}
                             </div>
                           ) : (
-                            <label className={`btn ${profileCompleted ? 'btn-primary' : 'btn-secondary'} btn-sm`} style={{ width: '100%', cursor: profileCompleted ? 'pointer' : 'not-allowed' }}>
-                              {subiendo ? <Loader2 className="spinner" /> : 'Subir Archivo'}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                              <label className={`btn ${profileCompleted ? 'btn-primary' : 'btn-secondary'} btn-sm`} style={{ width: '100%', cursor: profileCompleted ? 'pointer' : 'not-allowed' }}>
+                                {subiendo ? <Loader2 className="spinner" /> : 'Subir Archivo'}
+                                {profileCompleted && (
+                                  <input 
+                                    type="file" 
+                                    style={{ display: 'none' }} 
+                                    onChange={(e) => handleFileUpload(doc.tipo_documento, e)}
+                                    disabled={subiendo}
+                                  />
+                                )}
+                              </label>
                               {profileCompleted && (
-                                <input 
-                                  type="file" 
-                                  style={{ display: 'none' }} 
-                                  onChange={(e) => handleFileUpload(doc.tipo_documento, e)}
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem' }}
+                                  onClick={() => setCamaraDocumento(doc.tipo_documento)}
                                   disabled={subiendo}
-                                />
+                                >
+                                  <Camera size={14} /> Usar Cámara
+                                </button>
                               )}
-                            </label>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -711,6 +752,20 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
 
         </section>
       </main>
+
+      {/* Modal de captura de cámara para documentos */}
+      {camaraDocumento && (
+        <CameraCapture
+          title={`Capturar: ${nombresDocumentos[camaraDocumento] || camaraDocumento}`}
+          hint={
+            camaraDocumento === 'foto_4x4'
+              ? 'Coloque su cara centrada, bien iluminada y mirando a la cámara'
+              : 'Coloque el documento centrado, con buena iluminación y sin reflejos'
+          }
+          onCapture={(blob, dataUrl) => handleCamaraUpload(blob, dataUrl, camaraDocumento)}
+          onClose={() => setCamaraDocumento(null)}
+        />
+      )}
     </div>
   );
 }

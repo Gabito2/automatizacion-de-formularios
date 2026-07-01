@@ -64,6 +64,22 @@ export const authAPI = {
     });
     return response.data;
   },
+  /** Analiza DNI capturado desde cámara (envia base64 JSON) */
+  analizarDniCamara: async (dataUrl, filename = 'camara.jpg') => {
+    const response = await api.post('/auth/analizar-dni-camara', {
+      image_base64: dataUrl,
+      filename,
+    });
+    return response.data;
+  },
+  /** Analiza foto personal capturada desde cámara (envia base64 JSON) */
+  analizarFotoCamara: async (dataUrl, filename = 'camara.jpg') => {
+    const response = await api.post('/auth/analizar-foto-camara', {
+      image_base64: dataUrl,
+      filename,
+    });
+    return response.data;
+  },
 };
 
 export const estudianteAPI = {
@@ -92,6 +108,15 @@ export const estudianteAPI = {
   },
   getEstado: async () => {
     const response = await api.get('/estudiante/estado');
+    return response.data;
+  },
+  /** Sube un documento capturado desde cámara (envia base64 JSON) */
+  uploadDocumentoCamara: async (tipoDocumento, dataUrl, filename = 'camara.jpg') => {
+    const response = await api.post('/estudiante/documentos-camara', {
+      tipo_documento: tipoDocumento,
+      image_base64: dataUrl,
+      filename,
+    });
     return response.data;
   },
 };

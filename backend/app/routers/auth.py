@@ -1,5 +1,6 @@
 import os
 import shutil
+import base64
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm
@@ -30,6 +31,10 @@ class PasswordChangeRequest(BaseModel):
 class RecoveryRequest(BaseModel):
     dni: str
     email: EmailStr
+
+class ImageBase64Request(BaseModel):
+    image_base64: str  # Imagen codificada en base64 (sin el prefijo data:image/...;base64,)
+    filename: str = "camara.jpg"  # Nombre de referencia con extensión
 
 def generate_temp_password(length=8) -> str:
     """Genera una contraseña temporal aleatoria."""
@@ -178,6 +183,63 @@ def analizar_dni(
             os.remove(prep_path)
 
 
+@router.post("/analizar-dni-camara")
+def analizar_dni_camara(
+    data: ImageBase64Request,
+):
+    """
+    Recibe una imagen de DNI (frente) codificada en base64 capturada desde la cámara
+    y extrae sus datos (DNI, Nombre, Apellido, Fecha de Nacimiento) mediante OCR.
+    """
+    allowed_extensions = {".jpg", ".jpeg", ".png"}
+    _, ext = os.path.splitext(data.filename)
+    ext = ext.lower() or ".jpg"
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de archivo no permitido. Solo se aceptan imágenes JPG y PNG."
+        )
+
+    # Decodificar base64
+    try:
+        # Quitar posible prefijo data:image/...;base64,
+        raw_b64 = data.image_base64
+        if "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        image_bytes = base64.b64decode(raw_b64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La imagen base64 recibida no tiene un formato válido."
+        )
+
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"temp_ocr_cam_{random.randint(1000, 9999)}{ext}")
+
+    try:
+        with open(temp_path, "wb") as f:
+            f.write(image_bytes)
+
+        extracted_text, quality_report = OCRService.extract_text(temp_path)
+        extracted_fields = OCRService.parse_dni_text(extracted_text)
+
+        return {
+            "extracted_text": extracted_text,
+            "extracted_fields": extracted_fields,
+            "calidad_reporte": quality_report
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al analizar la imagen de DNI desde cámara: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 @router.post("/analizar-foto")
 def analizar_foto(
     file: UploadFile = File(...),
@@ -232,6 +294,69 @@ def analizar_foto(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@router.post("/analizar-foto-camara")
+def analizar_foto_camara(
+    data: ImageBase64Request,
+):
+    """
+    Recibe una imagen de foto personal capturada desde la cámara (base64)
+    y verifica si contiene un rostro humano visible.
+    """
+    allowed_extensions = {".jpg", ".jpeg", ".png"}
+    _, ext = os.path.splitext(data.filename)
+    ext = ext.lower() or ".jpg"
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato no permitido. Solo se aceptan imágenes JPG y PNG."
+        )
+
+    try:
+        raw_b64 = data.image_base64
+        if "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        image_bytes = base64.b64decode(raw_b64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La imagen base64 recibida no tiene un formato válido."
+        )
+
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"temp_face_cam_{random.randint(1000, 9999)}{ext}")
+
+    try:
+        with open(temp_path, "wb") as f:
+            f.write(image_bytes)
+
+        face_result = FaceService.detect_face(temp_path)
+
+        if face_result.get("has_face"):
+            message = f"Rostro detectado correctamente (confianza: {face_result['confidence']:.0%})."
+        else:
+            message = "No se detectó un rostro humano visible. Asegúrese de que su cara esté centrada y bien iluminada."
+
+        return {
+            "has_face": face_result["has_face"],
+            "face_count": face_result["face_count"],
+            "confidence": face_result["confidence"],
+            "method_used": face_result.get("method_used", "unknown"),
+            "message": message,
+            "error": face_result.get("error")
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al analizar la foto desde cámara: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
 
 @router.post("/register")
 def register_student(
@@ -344,8 +469,12 @@ def register_student(
                 ocr_dni_observado = True
                 if ocr_results.get("text_empty"):
                     ocr_observacion_msg = "No se pudo extraer texto del DNI (imagen ilegible). El documento requiere revisión manual."
+                elif not ocr_results.get("is_dni_document"):
+                    ocr_observacion_msg = "La imagen subida no parece ser un DNI argentino. Por favor suba una foto clara del frente de su DNI."
                 elif not ocr_results.get("dni_match"):
                     ocr_observacion_msg = "El número de DNI extraído del documento no coincide con el DNI declarado en el formulario. Requiere revisión manual."
+                elif not ocr_results.get("name_match") or not ocr_results.get("lastname_match"):
+                    ocr_observacion_msg = "El nombre o apellido extraído del DNI no coincide con los datos ingresados. Requiere revisión manual."
                 else:
                     ocr_observacion_msg = "Los datos extraídos del DNI no coinciden completamente con los ingresados. Requiere revisión manual."
         except Exception as e:

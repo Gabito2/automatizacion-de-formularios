@@ -1,4 +1,6 @@
 import os
+import base64
+import random
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -10,6 +12,11 @@ from app.utils.file_manager import save_document_file
 from app.services.ocr_service import OCRService
 
 router = APIRouter(prefix="/estudiante", tags=["estudiante"])
+
+class ImageBase64Request(BaseModel):
+    tipo_documento: str
+    image_base64: str  # Imagen codificada en base64
+    filename: str = "camara.jpg"
 
 class DatosPersonalesSchema(BaseModel):
     telefono: str
@@ -396,4 +403,143 @@ def get_estado_legajo(
         "estado_general": estado_general,
         "documentos": reporte_docs,
         "observaciones": reporte_observaciones
+    }
+
+
+@router.post("/documentos-camara")
+def upload_document_camara(
+    data: ImageBase64Request,
+    current_student: Usuario = Depends(get_current_student),
+    db: Session = Depends(get_db)
+):
+    """
+    Sube un documento desde captura de cámara (imagen base64).
+    El procesamiento de OCR y guardado es idéntico al endpoint de subida de archivo.
+    """
+    tipo_documento = data.tipo_documento
+    allowed_extensions = {".jpg", ".jpeg", ".png"}
+    _, ext = os.path.splitext(data.filename)
+    ext = ext.lower() or ".jpg"
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Solo se aceptan imágenes JPG y PNG desde cámara."
+        )
+
+    # Decodificar base64
+    try:
+        raw_b64 = data.image_base64
+        if "," in raw_b64:
+            raw_b64 = raw_b64.split(",", 1)[1]
+        file_content = base64.b64decode(raw_b64)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La imagen base64 recibida no tiene un formato válido."
+        )
+
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    if len(file_content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El archivo supera el tamaño máximo permitido de 10MB."
+        )
+
+    # Guardar archivo en el sistema de legajos
+    carrera = current_student.carrera or "sin_carrera"
+    dni = current_student.dni
+
+    legajos_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos"))
+    student_dir = os.path.join(legajos_dir, carrera, dni)
+    os.makedirs(student_dir, exist_ok=True)
+    safe_tipo = tipo_documento.replace("/", "_")
+    filename_out = f"{safe_tipo}{ext}"
+    saved_full_path = os.path.join(student_dir, filename_out)
+
+    try:
+        with open(saved_full_path, "wb") as f:
+            f.write(file_content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al guardar el archivo: {str(e)}"
+        )
+
+    # Ruta relativa para guardar en BD (igual que save_document_file)
+    saved_path = os.path.join("legajos", carrera, dni, filename_out)
+
+    # Registrar o actualizar en la base de datos
+    doc_record = db.query(Documento).filter(
+        Documento.usuario_id == current_student.id,
+        Documento.tipo_documento == tipo_documento
+    ).first()
+
+    if not doc_record:
+        doc_record = Documento(
+            usuario_id=current_student.id,
+            tipo_documento=tipo_documento,
+            archivo_url=saved_path,
+            estado="pendiente"
+        )
+        db.add(doc_record)
+    else:
+        doc_record.archivo_url = saved_path
+        doc_record.estado = "pendiente"
+        doc_record.observacion = None
+
+    db.commit()
+    db.refresh(doc_record)
+
+    # Procesamiento OCR (solo para DNI frente/dorso)
+    ocr_results = None
+    quality_report = None
+    ocr_extracted_fields = None
+
+    if tipo_documento in ["dni_frente", "dni_dorso"]:
+        absolute_path = saved_full_path
+        user_info = {
+            "dni": current_student.dni,
+            "nombre": current_student.nombre,
+            "apellido": current_student.apellido,
+            "fecha_nacimiento": current_student.datos_personales.fecha_nacimiento if current_student.datos_personales else None
+        }
+        extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
+        ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
+        ocr_extracted_fields = OCRService.parse_dni_text(extracted_text)
+
+        if quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright"):
+            doc_record.estado = "observado"
+            doc_record.observacion = "El sistema detectó baja calidad de imagen. Por favor, capture una imagen más clara."
+            obs = Observacion(
+                documento_id=doc_record.id,
+                mensaje="Validación automática: La imagen capturada presenta baja legibilidad."
+            )
+            db.add(obs)
+            db.commit()
+        elif ocr_results and tipo_documento == "dni_frente":
+            if not ocr_results.get("dni_match"):
+                doc_record.estado = "observado"
+                doc_record.observacion = "El DNI extraído del documento no coincide con el DNI declarado."
+                obs = Observacion(
+                    documento_id=doc_record.id,
+                    mensaje="Validación automática: El número de documento extraído por OCR no coincide con el declarado."
+                )
+                db.add(obs)
+                db.commit()
+
+    return {
+        "message": "Imagen de cámara cargada correctamente",
+        "documento": {
+            "id": doc_record.id,
+            "tipo_documento": doc_record.tipo_documento,
+            "archivo_url": doc_record.archivo_url,
+            "estado": doc_record.estado,
+            "observacion": doc_record.observacion,
+            "fecha_subida": doc_record.fecha_subida
+        },
+        "ocr_analizado": ocr_results is not None,
+        "ocr_resultados": ocr_results,
+        "ocr_datos_extraidos": ocr_extracted_fields,
+        "calidad_reporte": quality_report
     }

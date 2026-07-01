@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { authAPI } from '../services/api';
+import CameraCapture from '../components/CameraCapture';
 import { 
   GraduationCap, User, Lock, Mail, Phone, MapPin, 
   Award, Calendar, FileText, CheckCircle2, 
-  AlertCircle, ArrowRight, ArrowLeft, Loader2, Sparkles 
+  AlertCircle, ArrowRight, ArrowLeft, Loader2, Sparkles, Camera
 } from 'lucide-react';
 
 export default function Preinscripcion({ onBackToLogin }) {
@@ -41,6 +42,9 @@ export default function Preinscripcion({ onBackToLogin }) {
   const [prevFrente, setPrevFrente] = useState('');
   const [prevDorso, setPrevDorso] = useState('');
   const [prevPersona, setPrevPersona] = useState('');
+
+  // Control de modales de cámara
+  const [camaraAbierta, setCamaraAbierta] = useState(null); // 'dni_frente' | 'dni_dorso' | 'foto_persona' | null
 
   // Estado para la validación de DNI en tiempo real
   const [analizandoDni, setAnalizandoDni] = useState(false);
@@ -129,10 +133,54 @@ export default function Preinscripcion({ onBackToLogin }) {
       setResultadoFoto(response);
     } catch (err) {
       console.error("Error al pre-analizar foto personal:", err);
-      // Si hay error en el servidor, no bloqueamos pero informamos
       setResultadoFoto({ has_face: null, confidence: 0, message: 'No se pudo validar la foto en este momento.' });
     } finally {
       setAnalizandoFoto(false);
+    }
+  };
+
+  // Captura desde cámara
+  const handleCamaraCapture = async (blob, dataUrl, tipo) => {
+    setCamaraAbierta(null);
+    // Crear un File a partir del Blob para mantener compatibilidad con el flujo existente
+    const ext = 'jpg';
+    const file = new File([blob], `camara_${tipo}.${ext}`, { type: 'image/jpeg' });
+
+    if (tipo === 'dni_frente') {
+      setDniFrente(file);
+      setPrevFrente(dataUrl);
+      // Analizar OCR via endpoint de cámara
+      setAnalizandoDni(true);
+      setDatosExtraidadosDni(null);
+      setDiscrepanciasDni(null);
+      setError('');
+      try {
+        const response = await authAPI.analizarDniCamara(dataUrl, `camara.${ext}`);
+        if (response && response.extracted_fields) {
+          setDatosExtraidadosDni(response.extracted_fields);
+        }
+      } catch (err) {
+        console.error('Error al analizar DNI desde cámara:', err);
+      } finally {
+        setAnalizandoDni(false);
+      }
+    } else if (tipo === 'dni_dorso') {
+      setDniDorso(file);
+      setPrevDorso(dataUrl);
+    } else if (tipo === 'foto_persona') {
+      setFotoPersona(file);
+      setPrevPersona(dataUrl);
+      setAnalizandoFoto(true);
+      setResultadoFoto(null);
+      try {
+        const response = await authAPI.analizarFotoCamara(dataUrl, `camara.${ext}`);
+        setResultadoFoto(response);
+      } catch (err) {
+        console.error('Error al analizar foto desde cámara:', err);
+        setResultadoFoto({ has_face: null, confidence: 0, message: 'No se pudo validar la foto en este momento.' });
+      } finally {
+        setAnalizandoFoto(false);
+      }
     }
   };
 
@@ -604,15 +652,25 @@ export default function Preinscripcion({ onBackToLogin }) {
               
               {/* 1. DNI Frente */}
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
                     <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>DNI Frente *</h4>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen frontal del DNI (JPG o PNG)</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen frontal del DNI (JPG, PNG o foto)</span>
                   </div>
-                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                    {dniFrente ? 'Cambiar Archivo' : 'Cargar Archivo'}
-                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_frente')} />
-                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                      {dniFrente ? 'Cambiar Archivo' : 'Cargar Archivo'}
+                      <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_frente')} />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setCamaraAbierta('dni_frente')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                    >
+                      <Camera size={14} /> Cámara
+                    </button>
+                  </div>
                 </div>
                 {prevFrente && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -738,15 +796,25 @@ export default function Preinscripcion({ onBackToLogin }) {
 
               {/* 2. DNI Dorso */}
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
                     <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>DNI Dorso *</h4>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen trasera del DNI (JPG o PNG)</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Imagen trasera del DNI (JPG, PNG o foto)</span>
                   </div>
-                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                    {dniDorso ? 'Cambiar Archivo' : 'Cargar Archivo'}
-                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_dorso')} />
-                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                      {dniDorso ? 'Cambiar Archivo' : 'Cargar Archivo'}
+                      <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={(e) => handleFileChange(e, 'dni_dorso')} />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setCamaraAbierta('dni_dorso')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                    >
+                      <Camera size={14} /> Cámara
+                    </button>
+                  </div>
                 </div>
                 {prevDorso && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -761,15 +829,25 @@ export default function Preinscripcion({ onBackToLogin }) {
 
               {/* 3. Foto Personal / Rostro */}
               <div style={{ border: `1px solid ${resultadoFoto && resultadoFoto.has_face === false ? '#fc8181' : 'var(--border-color)'}`, borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white', transition: 'border-color 0.3s ease' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
                     <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>Foto de Rostro (Foto Carnet/Selfie) *</h4>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Debe ser una foto clara de frente de su cara (JPG, PNG)</span>
                   </div>
-                  <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
-                    {fotoPersona ? 'Cambiar Foto' : 'Cargar Foto'}
-                    <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png" onChange={(e) => handleFileChange(e, 'foto_persona')} />
-                  </label>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                      {fotoPersona ? 'Cambiar Foto' : 'Cargar Foto'}
+                      <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png" onChange={(e) => handleFileChange(e, 'foto_persona')} />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setCamaraAbierta('foto_persona')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                    >
+                      <Camera size={14} /> Cámara
+                    </button>
+                  </div>
                 </div>
                 {prevPersona && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -823,6 +901,24 @@ export default function Preinscripcion({ onBackToLogin }) {
           </form>
         )}
       </div>
+
+      {/* Modal de captura de cámara */}
+      {camaraAbierta && (
+        <CameraCapture
+          title={
+            camaraAbierta === 'dni_frente' ? 'Capturar DNI Frente' :
+            camaraAbierta === 'dni_dorso' ? 'Capturar DNI Dorso' :
+            'Capturar Foto Personal'
+          }
+          hint={
+            camaraAbierta === 'foto_persona'
+              ? 'Coloque su cara centrada, bien iluminada y mirando a la cámara'
+              : 'Coloque el DNI centrado, con buena iluminación y sin reflejos'
+          }
+          onCapture={(blob, dataUrl) => handleCamaraCapture(blob, dataUrl, camaraAbierta)}
+          onClose={() => setCamaraAbierta(null)}
+        />
+      )}
     </div>
   );
 }

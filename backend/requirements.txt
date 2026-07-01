@@ -31,10 +31,14 @@ opencv-python==4.13.0.92       # Procesamiento de imágenes base
 Pillow==12.2.0                  # Manejo de formatos de imagen
 numpy==2.4.6                    # Operaciones matriciales para visión
 
-# Motor OCR primario (no requiere instalación de ejecutables externos)
-easyocr>=1.7.0                  # OCR con soporte español/inglés + modelos deep learning
+# Motor OCR primario: PaddleOCR (mejor precisión + score de confianza por palabra)
+paddlepaddle                    # Framework base de PaddleOCR (CPU, sin GPU)
+paddleocr>=2.7.0                # OCR con soporte multilenguaje y detección de layout
 
-# Motor OCR secundario/fallback (requiere instalar Tesseract-OCR por separado)
+# Motor OCR secundario/fallback
+easyocr>=1.7.0                  # Fallback: OCR con soporte español/inglés
+
+# Motor OCR terciario/fallback (requiere instalar Tesseract-OCR por separado)
 pytesseract==0.3.13             # Wrapper Python para Tesseract-OCR
 
 # Detección facial mejorada (primario)
