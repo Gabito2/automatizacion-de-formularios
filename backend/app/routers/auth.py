@@ -134,10 +134,10 @@ def analizar_dni(
     file: UploadFile = File(...),
 ):
     """
-    Recibe una imagen de DNI (frente) y extrae sus datos
+    Recibe una imagen o PDF de DNI (frente) y extrae sus datos
     (DNI, Nombre, Apellido, Fecha de Nacimiento) mediante OCR.
     """
-    allowed_extensions = {".jpg", ".jpeg", ".png"}
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".pdf"}
     filename = file.filename
     _, ext = os.path.splitext(filename)
     ext = ext.lower()
@@ -145,7 +145,7 @@ def analizar_dni(
     if ext not in allowed_extensions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Formato de archivo no permitido. Solo se aceptan imágenes JPG y PNG para procesamiento OCR directo."
+            detail="Formato de archivo no permitido. Solo se aceptan imágenes JPG, PNG y PDFs."
         )
         
     # Guardar temporalmente en un archivo para que OCRService pueda leerlo
@@ -177,10 +177,6 @@ def analizar_dni(
         # Limpiar archivo temporal si existe
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        # Limpiar también la imagen preprocesada si se generó
-        prep_path = temp_path.replace(".", "_preprocessed.")
-        if os.path.exists(prep_path):
-            os.remove(prep_path)
 
 
 @router.post("/analizar-dni-camara")
@@ -376,12 +372,12 @@ def register_student(
     password: str = Form(...),
     dni_frente: UploadFile = File(...),
     dni_dorso: UploadFile = File(...),
-    foto_persona: UploadFile = File(...),
+    foto_persona: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
     """
     Registra/preinscribe un nuevo estudiante.
-    Realiza detección facial en la foto personal y validación OCR en el DNI frontal.
+    Realiza detección facial en la foto personal (opcional) y validación OCR en el DNI frontal.
     """
     # 1. Verificar si el DNI ya existe
     existing_user = db.query(Usuario).filter(Usuario.dni == dni).first()
@@ -392,27 +388,34 @@ def register_student(
         )
 
     # 2. Validar extensiones de archivo
-    allowed_extensions = {".jpg", ".jpeg", ".png"}
-    for file_item, label in [(dni_frente, "DNI Frente"), (dni_dorso, "DNI Dorso"), (foto_persona, "Foto Personal")]:
+    image_exts = {".jpg", ".jpeg", ".png"}
+    dni_exts = {".pdf", ".jpg", ".jpeg", ".png"}
+
+    for file_item, label in [(dni_frente, "DNI Frente"), (dni_dorso, "DNI Dorso")]:
         _, ext = os.path.splitext(file_item.filename)
         ext = ext.lower()
-        if label == "Foto Personal" and ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La foto personal debe ser una imagen (.jpg, .jpeg, .png) para realizar la detección facial."
-            )
-        # Para DNI, también se admite PDF en otros flujos, pero para OCR directo de imagen necesitamos imagen
-        if ext not in {".pdf", ".jpg", ".jpeg", ".png"}:
+        if ext not in dni_exts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Formato no permitido para {label}. Solo se aceptan PDFs e imágenes."
             )
 
-    # 3. Guardar archivos temporalmente en el legajo antes de validar
+    if foto_persona is not None:
+        _, ext = os.path.splitext(foto_persona.filename)
+        ext = ext.lower()
+        if ext not in image_exts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La foto personal debe ser una imagen (.jpg, .jpeg, .png)."
+            )
+
+    # 3. Guardar archivos en el legajo
     try:
         saved_frente = save_document_file(carrera, dni, "dni_frente", dni_frente)
         saved_dorso = save_document_file(carrera, dni, "dni_dorso", dni_dorso)
-        saved_persona = save_document_file(carrera, dni, "foto_4x4", foto_persona)
+        saved_persona = None
+        if foto_persona is not None:
+            saved_persona = save_document_file(carrera, dni, "foto_4x4", foto_persona)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -421,35 +424,35 @@ def register_student(
 
     # Obtener rutas físicas absolutas para procesamiento
     absolute_frente = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_frente))
-    absolute_persona = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_persona))
     user_dir = os.path.dirname(absolute_frente)
 
-    # 4. Validación Facial en la foto personal (Selfie)
-    # Debe ser una imagen para poder correr la detección facial
-    _, persona_ext = os.path.splitext(foto_persona.filename)
+    # 4. Validación Facial en la foto personal (solo si se subió)
     face_check = {"has_face": False, "confidence": 0.0, "method_used": "none"}
-    if persona_ext.lower() in allowed_extensions:
-        face_check = FaceService.detect_face(absolute_persona)
-        if not face_check.get("has_face"):
-            # Limpieza de archivos cargados por error
-            if os.path.exists(user_dir):
-                shutil.rmtree(user_dir)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Detección facial fallida: No se encontró un rostro humano visible en la foto de perfil subida. "
-                    "Asegúrese de que su cara esté centrada, bien iluminada y sin obstrucciones."
+    if foto_persona is not None and saved_persona:
+        absolute_persona = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_persona))
+        _, persona_ext = os.path.splitext(foto_persona.filename)
+        if persona_ext.lower() in image_exts:
+            face_check = FaceService.detect_face(absolute_persona)
+            if not face_check.get("has_face"):
+                if os.path.exists(user_dir):
+                    shutil.rmtree(user_dir)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Detección facial fallida: No se encontró un rostro humano visible en la foto de perfil subida. "
+                        "Asegúrese de que su cara esté centrada, bien iluminada y sin obstrucciones."
+                    )
                 )
-            )
 
-    # 5. Validación OCR del DNI Frente
+    # 5. Validación OCR del DNI Frente (imágenes Y PDFs)
     _, frente_ext = os.path.splitext(dni_frente.filename)
     ocr_results = None
     quality_report = None
     ocr_dni_observado = False
     ocr_observacion_msg = None
 
-    if frente_ext.lower() in allowed_extensions:
+    ocr_extensions = {".jpg", ".jpeg", ".png", ".pdf"}
+    if frente_ext.lower() in ocr_extensions:
         user_info = {
             "dni": dni,
             "nombre": nombre,
@@ -545,19 +548,20 @@ def register_student(
         )
         db.add(doc_dorso)
 
-        # Estado de la foto personal según confianza del detector facial
-        confidence = face_check.get("confidence", 0.0)
-        estado_foto = "aprobado" if confidence >= 0.5 else "pendiente"
-        obs_foto = None if confidence >= 0.5 else f"Detección facial con baja confianza ({confidence:.0%}). Requiere revisión manual."
+        # Foto personal (opcional)
+        if saved_persona is not None:
+            confidence = face_check.get("confidence", 0.0)
+            estado_foto = "aprobado" if confidence >= 0.5 else "pendiente"
+            obs_foto = None if confidence >= 0.5 else f"Detección facial con baja confianza ({confidence:.0%}). Requiere revisión manual."
 
-        doc_persona = Documento(
-            usuario_id=new_user.id,
-            tipo_documento="foto_4x4",
-            archivo_url=saved_persona,
-            estado=estado_foto,
-            observacion=obs_foto
-        )
-        db.add(doc_persona)
+            doc_persona = Documento(
+                usuario_id=new_user.id,
+                tipo_documento="foto_4x4",
+                archivo_url=saved_persona,
+                estado=estado_foto,
+                observacion=obs_foto
+            )
+            db.add(doc_persona)
 
         db.commit()
 
@@ -565,8 +569,8 @@ def register_student(
         warnings = []
         if ocr_dni_observado:
             warnings.append("El DNI frontal quedó marcado para revisión manual.")
-        if estado_foto == "pendiente":
-            warnings.append("La foto personal quedó marcada para revisión manual.")
+        if saved_persona is None:
+            warnings.append("No se adjuntó foto personal. Podrá subirla más tarde desde su panel.")
 
         msg = "Preinscripción realizada con éxito. Ahora puede iniciar sesión con su DNI y contraseña."
         if warnings:

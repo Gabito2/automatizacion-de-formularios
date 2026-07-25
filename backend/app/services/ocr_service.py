@@ -1,8 +1,16 @@
 import os
 import re
+import shutil
+import tempfile
 import cv2
 import numpy as np
 import logging
+
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -52,11 +60,13 @@ except ImportError:
 # ── MOTOR TERCIARIO: PyTesseract ───────────────────────────────────────────────
 try:
     import pytesseract
-    TESSERACT_CMD = os.getenv("TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
-    if os.path.exists(TESSERACT_CMD):
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+    _tesseract_cmd = os.getenv("TESSERACT_CMD")
+    if not _tesseract_cmd:
+        _tesseract_cmd = shutil.which("tesseract")
+    if _tesseract_cmd and os.path.exists(_tesseract_cmd):
+        pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
         TESSERACT_AVAILABLE = True
-        logger.info(f"Tesseract configurado en: {TESSERACT_CMD}")
+        logger.info(f"Tesseract configurado en: {_tesseract_cmd}")
     else:
         try:
             pytesseract.get_tesseract_version()
@@ -134,11 +144,10 @@ class OCRService:
     @staticmethod
     def preprocess_image(image_path: str):
         """
-        Preprocesamiento avanzado con OpenCV:
+        Preprocesamiento de imagen con OpenCV:
         - Escala a mínimo 1500px de ancho
         - Corrección leve de inclinación (deskew)
-        - Filtro bilateral + CLAHE + Sharpening
-        - Umbralización adaptativa
+        - Filtro bilateral + CLAHE + Sharpening leve
         Retorna (imagen_procesada, quality_report).
         """
         img = cv2.imread(image_path)
@@ -184,15 +193,12 @@ class OCRService:
         except Exception:
             pass
 
-        # Filtro bilateral → CLAHE → Sharpening → Umbralización
+        # Filtro bilateral → CLAHE → Sharpening leve
         filtered = cv2.bilateralFilter(gray, 9, 75, 75)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(filtered)
-        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         sharpened = cv2.filter2D(enhanced, -1, kernel)
-        thresh = cv2.adaptiveThreshold(
-            sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 4
-        )
 
         quality_report = {
             "blur_score": float(laplacian_var),
@@ -204,7 +210,7 @@ class OCRService:
             "is_incomplete": bool(is_incomplete),
             "legible": not (is_blurry or is_too_dark or is_too_bright),
         }
-        return thresh, quality_report
+        return sharpened, quality_report
 
     # ─────────────────────────────────────────────────────────────────────────
     # Detección de documento DNI argentino
@@ -298,29 +304,38 @@ class OCRService:
         """Ejecuta todos los motores disponibles y retorna sus resultados."""
         results = []
 
-        if PADDLEOCR_AVAILABLE:
-            try:
-                text, conf = OCRService._extract_with_paddleocr(image_path)
-                if text.strip():
-                    results.append({"engine": "paddleocr", "text": text, "confidence": conf})
-            except Exception as e:
-                logger.warning(f"[Voting] PaddleOCR falló: {e}")
+        # Guardar imagen preprocesada a disco temporal para que todos los motores la usen
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+        try:
+            os.close(tmp_fd)
+            cv2.imwrite(tmp_path, processed_img)
 
-        if EASYOCR_AVAILABLE:
-            try:
-                text, conf = OCRService._extract_with_easyocr(image_path)
-                if text.strip():
-                    results.append({"engine": "easyocr", "text": text, "confidence": conf})
-            except Exception as e:
-                logger.warning(f"[Voting] EasyOCR falló: {e}")
+            if PADDLEOCR_AVAILABLE:
+                try:
+                    text, conf = OCRService._extract_with_paddleocr(tmp_path)
+                    if text.strip():
+                        results.append({"engine": "paddleocr", "text": text, "confidence": conf})
+                except Exception as e:
+                    logger.warning(f"[Voting] PaddleOCR falló: {e}")
 
-        if TESSERACT_AVAILABLE:
-            try:
-                text, conf = OCRService._extract_with_tesseract(processed_img, for_digits=False)
-                if text.strip():
-                    results.append({"engine": "tesseract", "text": text, "confidence": conf})
-            except Exception as e:
-                logger.warning(f"[Voting] Tesseract falló: {e}")
+            if EASYOCR_AVAILABLE:
+                try:
+                    text, conf = OCRService._extract_with_easyocr(tmp_path)
+                    if text.strip():
+                        results.append({"engine": "easyocr", "text": text, "confidence": conf})
+                except Exception as e:
+                    logger.warning(f"[Voting] EasyOCR falló: {e}")
+
+            if TESSERACT_AVAILABLE:
+                try:
+                    text, conf = OCRService._extract_with_tesseract(processed_img, for_digits=False)
+                    if text.strip():
+                        results.append({"engine": "tesseract", "text": text, "confidence": conf})
+                except Exception as e:
+                    logger.warning(f"[Voting] Tesseract falló: {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
         return results
 
@@ -387,37 +402,173 @@ class OCRService:
         return _apply_digit_correction_to_text(best["text"]), best["engine"], best["confidence"]
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Conversión de PDF a imágenes
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _pdf_to_images(pdf_path: str, dpi: int = 300) -> list[str]:
+        """
+        Convierte cada página de un PDF a una imagen PNG temporal.
+        Retorna una lista de rutas a las imágenes generadas.
+        """
+        if not PDF_AVAILABLE:
+            raise ValueError("PyMuPDF no está instalado. No se puede procesar PDFs.")
+
+        temp_dir = tempfile.mkdtemp(prefix="ocr_pdf_")
+        image_paths = []
+
+        doc = fitz.open(pdf_path)
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            # Renderizar a pixmap con la resolución especificada
+            zoom = dpi / 72.0
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+
+            img_path = os.path.join(temp_dir, f"page_{page_num + 1}.png")
+            pix.save(img_path)
+            image_paths.append(img_path)
+            logger.info(f"[PDF] Página {page_num + 1} convertida a imagen: {pix.width}x{pix.height}px")
+
+        doc.close()
+        return image_paths
+
+    @staticmethod
+    def _cleanup_temp_images(image_paths: list[str]):
+        """Limpia imágenes temporales generadas desde PDFs."""
+        for path in image_paths:
+            temp_dir = os.path.dirname(path)
+            if os.path.exists(path):
+                os.remove(path)
+        # Eliminar directorio temporal si queda vacío
+        if image_paths:
+            temp_dir = os.path.dirname(image_paths[0])
+            if os.path.exists(temp_dir) and not os.listdir(temp_dir):
+                os.rmdir(temp_dir)
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Extracción principal con voting
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def extract_text(image_path: str, user_info: dict = None) -> tuple[str, dict]:
+    def _extract_from_single_image(image_path: str) -> tuple[str, dict]:
         """
-        Extrae texto ejecutando TODOS los motores disponibles y eligiendo el mejor
-        mediante voting ponderado sobre el número de DNI detectado.
+        Extrae texto de una sola imagen (sin conversión PDF).
+        Retorna (extracted_text, quality_report).
+        """
+        processed_img, quality_report = OCRService.preprocess_image(image_path)
+        all_results = OCRService._run_all_engines(image_path, processed_img)
+
+        if not all_results:
+            logger.warning("Ningún motor OCR pudo extraer texto.")
+            quality_report["ocr_engine"] = "none"
+            quality_report["ocr_error"] = "Ningún motor OCR disponible o imagen ilegible."
+            quality_report["confidence_avg"] = 0.0
+            return "", quality_report
+
+        extracted_text, winning_engine, confidence_avg = OCRService._vote_best_result(all_results)
+
+        quality_report["ocr_engine"] = winning_engine
+        quality_report["ocr_engines_used"] = [r["engine"] for r in all_results]
+        quality_report["confidence_avg"] = round(confidence_avg, 3)
+
+        return extracted_text, quality_report
+
+    @staticmethod
+    def extract_text(file_path: str, user_info: dict = None) -> tuple[str, dict]:
+        """
+        Extrae texto de una imagen O PDF ejecutando TODOS los motores OCR disponibles.
+
+        Si el archivo es un PDF, extrae cada página como imagen y ejecuta OCR
+        sobre cada una, retornando el texto combinado de todas las páginas.
 
         Retorna (extracted_text, quality_report).
         """
         try:
-            processed_img, quality_report = OCRService.preprocess_image(image_path)
-            all_results = OCRService._run_all_engines(image_path, processed_img)
+            _, ext = os.path.splitext(file_path)
+            ext = ext.lower()
 
-            if not all_results:
-                logger.warning("Ningún motor OCR pudo extraer texto.")
-                quality_report["ocr_engine"] = "none"
-                quality_report["ocr_error"] = "Ningún motor OCR disponible o imagen ilegible."
-                quality_report["confidence_avg"] = 0.0
-                return "", quality_report
+            # ── Caso PDF: convertir páginas a imágenes y procesar cada una ──
+            if ext == ".pdf":
+                if not PDF_AVAILABLE:
+                    logger.warning("PDF subido pero PyMuPDF no disponible. No se puede procesar.")
+                    return "", {
+                        "blur_score": 0.0, "brightness_score": 0.0, "edge_density": 0.0,
+                        "is_blurry": False, "is_too_dark": False, "is_too_bright": False,
+                        "is_incomplete": True, "legible": False,
+                        "ocr_engine": "none", "confidence_avg": 0.0,
+                        "ocr_error": "PyMuPDF no instalado. No se puede procesar PDFs.",
+                        "pages_processed": 0,
+                    }
 
-            extracted_text, winning_engine, confidence_avg = OCRService._vote_best_result(all_results)
+                logger.info(f"[OCR] Detectado PDF, extrayendo páginas: {file_path}")
+                page_images = OCRService._pdf_to_images(file_path)
 
-            quality_report["ocr_engine"] = winning_engine
-            quality_report["ocr_engines_used"] = [r["engine"] for r in all_results]
-            quality_report["confidence_avg"] = round(confidence_avg, 3)
+                if not page_images:
+                    return "", {
+                        "blur_score": 0.0, "brightness_score": 0.0, "edge_density": 0.0,
+                        "is_blurry": False, "is_too_dark": False, "is_too_bright": False,
+                        "is_incomplete": True, "legible": False,
+                        "ocr_engine": "none", "confidence_avg": 0.0,
+                        "ocr_error": "El PDF no contiene páginas procesables.",
+                        "pages_processed": 0,
+                    }
+
+                try:
+                    all_text_parts = []
+                    best_quality = None
+                    best_confidence = 0.0
+                    best_engine = "none"
+                    engines_used = set()
+
+                    for i, page_img in enumerate(page_images):
+                        logger.info(f"[OCR] Procesando página {i + 1}/{len(page_images)} del PDF")
+                        text, qreport = OCRService._extract_from_single_image(page_img)
+
+                        if text.strip():
+                            all_text_parts.append(text)
+
+                        # Conservar el reporte de calidad de la página con mayor confianza
+                        conf = qreport.get("confidence_avg", 0.0)
+                        if conf > best_confidence or best_quality is None:
+                            best_quality = qreport
+                            best_confidence = conf
+                            best_engine = qreport.get("ocr_engine", "none")
+
+                        if qreport.get("ocr_engines_used"):
+                            engines_used.update(qreport["ocr_engines_used"])
+
+                    combined_text = "\n".join(all_text_parts)
+
+                    if best_quality is None:
+                        best_quality = {
+                            "blur_score": 0.0, "brightness_score": 0.0, "edge_density": 0.0,
+                            "is_blurry": False, "is_too_dark": False, "is_too_bright": False,
+                            "is_incomplete": True, "legible": False,
+                        }
+
+                    best_quality["ocr_engine"] = best_engine
+                    best_quality["ocr_engines_used"] = list(engines_used)
+                    best_quality["confidence_avg"] = round(best_confidence, 3)
+                    best_quality["pages_processed"] = len(page_images)
+
+                    logger.info(
+                        f"[OCR Final PDF] {len(page_images)} páginas, "
+                        f"motor: {best_engine}, confianza: {best_confidence:.2f}, "
+                        f"texto total: {len(combined_text)} chars"
+                    )
+                    return combined_text, best_quality
+
+                finally:
+                    OCRService._cleanup_temp_images(page_images)
+
+            # ── Caso imagen: procesar directamente ──
+            extracted_text, quality_report = OCRService._extract_from_single_image(file_path)
 
             logger.info(
-                f"[OCR Final] Motor ganador: {winning_engine}, "
-                f"confianza: {confidence_avg:.2f}, texto: {len(extracted_text)} chars"
+                f"[OCR Final] Motor ganador: {quality_report.get('ocr_engine', 'none')}, "
+                f"confianza: {quality_report.get('confidence_avg', 0):.2f}, "
+                f"texto: {len(extracted_text)} chars"
             )
             return extracted_text, quality_report
 
@@ -466,15 +617,12 @@ class OCRService:
         # 0. ¿Es un DNI argentino?
         is_dni_doc = OCRService._is_dni_document(extracted_text)
 
-        # 1. DNI
+        # 1. DNI — match exacto como número independiente (7 u 8 dígitos)
         declared_dni = str(declared_data.get("dni") or "").strip()
-        norm_ocr_clean = norm_ocr.replace(" ", "")
         dni_match = False
         if declared_dni:
-            dni_match = declared_dni in norm_ocr_clean
-            if not dni_match and len(declared_dni) == 8:
-                dni_fmt = f"{declared_dni[:2]}{declared_dni[2:5]}{declared_dni[5:]}"
-                dni_match = dni_fmt in norm_ocr_clean
+            dni_pattern = re.compile(rf'(?<!\d){re.escape(declared_dni)}(?!\d)')
+            dni_match = bool(dni_pattern.search(norm_ocr.replace(" ", "")))
 
         # 2. Nombre
         declared_name = str(declared_data.get("nombre") or "").strip()
@@ -510,9 +658,15 @@ class OCRService:
                 parts = declared_dob.split("-")
                 if len(parts) == 3:
                     year, month, day = parts
-                    ocr_no_spaces = norm_ocr.replace(" ", "").replace("/", "").replace("-", "")
-                    if f"{day}{month}{year}" in ocr_no_spaces or f"{day}{month}{year[2:]}" in ocr_no_spaces:
+                    ocr_no_spaces = norm_ocr.replace(" ", "").replace("/", "").replace("-", "").replace(".", "")
+                    dob_4y = f"{day}{month}{year}"
+                    dob_2y = f"{day}{month}{year[2:]}"
+                    if dob_4y in ocr_no_spaces or dob_2y in ocr_no_spaces:
                         dob_match = True
+                    elif len(month) == 1 and len(day) == 1:
+                        dob_4y_sl = f"{day.zfill(2)}{month.zfill(2)}{year}"
+                        if dob_4y_sl in ocr_no_spaces:
+                            dob_match = True
             except Exception:
                 pass
 
@@ -580,24 +734,47 @@ class OCRService:
             if mfmt:
                 dni = mfmt.group(1) + mfmt.group(2) + mfmt.group(3)
 
-        # 2. Apellido y Nombre
+        # 2. Apellido y Nombre — búsqueda robusta
         apellido, nombre = "", ""
+
+        def _extract_value_after_label(line: str, label: str) -> str:
+            """Extrae el valor después de un label, sea con ':' o en la línea siguiente."""
+            upper_line = line.upper()
+            if label not in upper_line:
+                return ""
+            # Caso 1: "APELLIDO: GARCIA"
+            if ":" in line:
+                after = line.split(":", 1)[1].strip()
+                # Limpiar labels pegados (ej: "APELLIDO:GARCIA" → "GARCIA")
+                if after:
+                    return after
+            # Caso 2: el label está solo, el valor viene en la siguiente línea
+            return "__NEXT_LINE__"
+
         for i, line in enumerate(lines):
-            lu = line.upper()
-            if "APELLIDO" in lu:
-                if ":" in line:
-                    apellido = line.split(":", 1)[1].strip()
-                elif i + 1 < len(lines):
-                    nxt = lines[i + 1]
-                    if "NOMBRE" not in nxt.upper() and "DOCUMENTO" not in nxt.upper():
-                        apellido = nxt
-            elif "NOMBRE" in lu and "APELLIDO" not in lu:
-                if ":" in line:
-                    nombre = line.split(":", 1)[1].strip()
-                elif i + 1 < len(lines):
-                    nxt = lines[i + 1]
-                    if "APELLIDO" not in nxt.upper() and "DOCUMENTO" not in nxt.upper():
-                        nombre = nxt
+            upper_line = line.upper()
+
+            # Buscar APELLIDO
+            if "APELLIDO" in upper_line and "DOCUMENTO" not in upper_line:
+                result = _extract_value_after_label(line, "APELLIDO")
+                if result == "__NEXT_LINE__":
+                    if i + 1 < len(lines):
+                        nxt = lines[i + 1].upper()
+                        if "NOMBRE" not in nxt and "DOCUMENTO" not in nxt and "APELLIDO" not in nxt:
+                            apellido = lines[i + 1]
+                elif result:
+                    apellido = result
+
+            # Buscar NOMBRE (excluir "APELLIDO Y NOMBRE" si aparece junto)
+            elif "NOMBRE" in upper_line and "APELLIDO" not in upper_line:
+                result = _extract_value_after_label(line, "NOMBRE")
+                if result == "__NEXT_LINE__":
+                    if i + 1 < len(lines):
+                        nxt = lines[i + 1].upper()
+                        if "APELLIDO" not in nxt and "DOCUMENTO" not in nxt and "NOMBRE" not in nxt:
+                            nombre = lines[i + 1]
+                elif result:
+                    nombre = result
 
         def clean_field(text: str) -> str:
             if not text:
@@ -610,17 +787,21 @@ class OCRService:
         apellido = clean_field(apellido)
         nombre = clean_field(nombre)
 
-        # 3. Fecha de nacimiento
+        # 3. Fecha de nacimiento — soporta DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, DD/MM/YY
         fecha_nacimiento = ""
-        dm = re.search(r'\b(\d{2})[/\-](\d{2})[/\-](\d{4})\b', corrected_text)
+        # Formato con separadores: / . o -
+        dm = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{4})\b', corrected_text)
         if dm:
             day, month, year = dm.groups()
             fecha_nacimiento = f"{year}-{month}-{day}"
         else:
-            dm2 = re.search(r'\b(\d{2})[/\-](\d{2})[/\-](\d{2})\b', corrected_text)
+            dm2 = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{2})\b', corrected_text)
             if dm2:
                 day, month, y2 = dm2.groups()
-                year = f"20{y2}" if int(y2) < 30 else f"19{y2}"
+                y2_int = int(y2)
+                # DNIs argentinos: personas en edad universitaria (~17-70 años)
+                # 00-30 → 2000s, 31-99 → 1900s
+                year = f"20{y2}" if y2_int <= 30 else f"19{y2}"
                 fecha_nacimiento = f"{year}-{month}-{day}"
 
         return {

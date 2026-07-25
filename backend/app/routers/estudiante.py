@@ -175,7 +175,7 @@ def actualizar_datos_dni(
             "dni": current_student.dni,
             "nombre": current_student.nombre,
             "apellido": current_student.apellido,
-            "fecha_nacimiento": current_student.datos_personales.fecha_nacimiento
+            "fecha_nacimiento": current_student.datos_personales.fecha_nacimiento if current_student.datos_personales else None
         }
     }
 
@@ -250,15 +250,14 @@ def upload_document(
     db.commit()
     db.refresh(doc_record)
 
-    # 4. Procesamiento Inteligente / OCR (Solo para DNI frente o DNI dorso)
+    # 4. Procesamiento Inteligente / OCR (Solo para DNI frente o DNI dorso — imágenes y PDFs)
     ocr_results = None
     quality_report = None
     ocr_extracted_fields = None
     
-    # El archivo debe ser una imagen para procesar con OpenCV
-    is_image = ext in {".jpg", ".jpeg", ".png"}
+    isprocessable = ext in {".jpg", ".jpeg", ".png", ".pdf"}
     
-    if tipo_documento in ["dni_frente", "dni_dorso"] and is_image:
+    if tipo_documento in ["dni_frente", "dni_dorso"] and isprocessable:
         # Resolver ruta física absoluta
         absolute_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_path))
         

@@ -205,13 +205,9 @@ export default function Preinscripcion({ onBackToLogin }) {
     // Asignar archivo
     if (type === 'dni_frente') {
       setDniFrente(file);
-      if (ext !== '.pdf') {
-        setPrevFrente(URL.createObjectURL(file));
-        analizarDniFrente(file);
-      } else {
-        setPrevFrente('pdf');
-        setDatosExtraidadosDni(null);
-      }
+      setPrevFrente(ext !== '.pdf' ? URL.createObjectURL(file) : 'pdf');
+      // Pre-analizar OCR tanto para imágenes como PDFs
+      analizarDniFrente(file);
     } else if (type === 'dni_dorso') {
       setDniDorso(file);
       if (ext !== '.pdf') setPrevDorso(URL.createObjectURL(file));
@@ -259,14 +255,14 @@ export default function Preinscripcion({ onBackToLogin }) {
     setError('');
     setSuccess('');
     
-    if (!carrera || !sede || !dniFrente || !dniDorso || !fotoPersona) {
-      setError('Por favor seleccione carrera/sede y cargue los 3 archivos solicitados.');
+    if (!carrera || !sede || !dniFrente || !dniDorso) {
+      setError('Por favor seleccione carrera/sede y cargue el DNI (frente y dorso).');
       return;
     }
 
     // Bloquear envío si la validación de foto detectó explícitamente que no hay rostro
-    if (resultadoFoto && resultadoFoto.has_face === false) {
-      setError('La foto personal no pasó la validación: no se detectó un rostro humano. Por favor cambie la foto e intente nuevamente.');
+    if (fotoPersona && resultadoFoto && resultadoFoto.has_face === false) {
+      setError('La foto personal no pasó la validación: no se detectó un rostro humano. Por favor cambie la foto o quite la foto y suba la demás documentación.');
       return;
     }
 
@@ -298,7 +294,9 @@ export default function Preinscripcion({ onBackToLogin }) {
     formData.append('password', password);
     formData.append('dni_frente', dniFrente);
     formData.append('dni_dorso', dniDorso);
-    formData.append('foto_persona', fotoPersona);
+    if (fotoPersona) {
+      formData.append('foto_persona', fotoPersona);
+    }
 
     try {
       const res = await authAPI.register(formData);
@@ -831,7 +829,7 @@ export default function Preinscripcion({ onBackToLogin }) {
               <div style={{ border: `1px solid ${resultadoFoto && resultadoFoto.has_face === false ? '#fc8181' : 'var(--border-color)'}`, borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white', transition: 'border-color 0.3s ease' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div>
-                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>Foto de Rostro (Foto Carnet/Selfie) *</h4>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0 }}>Foto de Rostro (Foto Carnet/Selfie) <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>(Opcional)</span></h4>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Debe ser una foto clara de frente de su cara (JPG, PNG)</span>
                   </div>
                   <div style={{ display: 'flex', gap: '0.5rem' }}>

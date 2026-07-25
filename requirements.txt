@@ -30,6 +30,7 @@ email-validator==2.3.0
 opencv-python==4.13.0.92       # Procesamiento de imágenes base
 Pillow==12.2.0                  # Manejo de formatos de imagen
 numpy==2.4.6                    # Operaciones matriciales para visión
+PyMuPDF==1.28.0                 # Conversión de PDF a imagen para OCR
 
 # Motor OCR primario: PaddleOCR (mejor precisión + score de confianza por palabra)
 paddlepaddle                    # Framework base de PaddleOCR (CPU, sin GPU)
