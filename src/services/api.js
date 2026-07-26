@@ -80,6 +80,17 @@ export const authAPI = {
     });
     return response.data;
   },
+  /** Analiza un archivo compuesto (imagen o PDF) que puede contener múltiples documentos */
+  analizarArchivoCompuesto: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/auth/analizar-archivo-compuesto', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };
 
 export const estudianteAPI = {

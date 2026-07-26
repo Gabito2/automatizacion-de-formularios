@@ -55,6 +55,14 @@ export default function Preinscripcion({ onBackToLogin }) {
   const [analizandoFoto, setAnalizandoFoto] = useState(false);
   const [resultadoFoto, setResultadoFoto] = useState(null); // { has_face, confidence, message }
 
+  // Estado para archivo compuesto (archivo único con todos los documentos)
+  const [archivoCompuesto, setArchivoCompuesto] = useState(null);
+  const [prevCompuesto, setPrevCompuesto] = useState('');
+  const [analizandoCompuesto, setAnalizandoCompuesto] = useState(false);
+  const [documentosDetectados, setDocumentosDetectados] = useState(null);
+  const [dniDataCompuesto, setDniDataCompuesto] = useState(null);
+  const [usandoModoCompuesto, setUsandoModoCompuesto] = useState(false);
+
   const normalizarTexto = (text) => {
     if (!text) return '';
     return text.toUpperCase()
@@ -137,6 +145,64 @@ export default function Preinscripcion({ onBackToLogin }) {
     } finally {
       setAnalizandoFoto(false);
     }
+  };
+
+  const analizarArchivoCompuesto = async (file) => {
+    setAnalizandoCompuesto(true);
+    setDocumentosDetectados(null);
+    setDniDataCompuesto(null);
+    setError('');
+    try {
+      const response = await authAPI.analizarArchivoCompuesto(file);
+      if (response) {
+        setDocumentosDetectados(response.documents || []);
+        if (response.dni_data) {
+          setDniDataCompuesto(response.dni_data);
+        }
+      }
+    } catch (err) {
+      console.error("Error al analizar archivo compuesto:", err);
+      setError('No se pudo analizar el archivo compuesto.');
+    } finally {
+      setAnalizandoCompuesto(false);
+    }
+  };
+
+  const autoCompletarDesdeCompuesto = () => {
+    if (dniDataCompuesto) {
+      if (dniDataCompuesto.dni) setDni(dniDataCompuesto.dni);
+      if (dniDataCompuesto.nombre) setNombre(dniDataCompuesto.nombre);
+      if (dniDataCompuesto.apellido) setApellido(dniDataCompuesto.apellido);
+      if (dniDataCompuesto.fecha_nacimiento) setFechaNacimiento(dniDataCompuesto.fecha_nacimiento);
+    }
+  };
+
+  const handleFileChangeCompuesto = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const allowed = ['.jpg', '.jpeg', '.png', '.pdf'];
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    if (!allowed.includes(ext)) {
+      alert('Formato de archivo no permitido. Seleccione una imagen (.jpg, .png) o un PDF.');
+      return;
+    }
+
+    setArchivoCompuesto(file);
+    setPrevCompuesto(ext !== '.pdf' ? URL.createObjectURL(file) : 'pdf');
+    setUsandoModoCompuesto(true);
+    // Resetear archivos individuales
+    setDniFrente(null);
+    setDniDorso(null);
+    setFotoPersona(null);
+    setPrevFrente('');
+    setPrevDorso('');
+    setPrevPersona('');
+    setDatosExtraidadosDni(null);
+    setDiscrepanciasDni(null);
+    setResultadoFoto(null);
+    // Analizar
+    analizarArchivoCompuesto(file);
   };
 
   // Captura desde cámara
@@ -255,9 +321,22 @@ export default function Preinscripcion({ onBackToLogin }) {
     setError('');
     setSuccess('');
     
-    if (!carrera || !sede || !dniFrente || !dniDorso) {
-      setError('Por favor seleccione carrera/sede y cargue el DNI (frente y dorso).');
+    if (!carrera || !sede) {
+      setError('Por favor seleccione carrera/sede.');
       return;
+    }
+
+    // Validar según el modo
+    if (usandoModoCompuesto) {
+      if (!archivoCompuesto) {
+        setError('Ha seleccionado el modo de archivo compuesto pero no se subió ningún archivo.');
+        return;
+      }
+    } else {
+      if (!dniFrente || !dniDorso) {
+        setError('Por favor cargue el DNI (frente y dorso).');
+        return;
+      }
     }
 
     // Bloquear envío si la validación de foto detectó explícitamente que no hay rostro
@@ -272,7 +351,7 @@ export default function Preinscripcion({ onBackToLogin }) {
     // Simular mensajes de progreso interactivos para el usuario
     const timers = [
       setTimeout(() => setProgressMsg('Guardando archivos en el legajo digital...'), 1200),
-      setTimeout(() => setProgressMsg('Procesando foto personal en búsqueda de rostros...'), 2800),
+      setTimeout(() => setProgressMsg(usandoModoCompuesto ? 'Procesando documento compuesto...' : 'Procesando foto personal en búsqueda de rostros...'), 2800),
       setTimeout(() => setProgressMsg('Validando datos del DNI con lector OCR...'), 4500),
       setTimeout(() => setProgressMsg('Finalizando registro en base de datos...'), 6200),
     ];
@@ -292,10 +371,17 @@ export default function Preinscripcion({ onBackToLogin }) {
     formData.append('secundario_completo', secundarioCompleto ? 'true' : 'false');
     formData.append('titulo_secundario', tituloSecundario);
     formData.append('password', password);
-    formData.append('dni_frente', dniFrente);
-    formData.append('dni_dorso', dniDorso);
-    if (fotoPersona) {
-      formData.append('foto_persona', fotoPersona);
+
+    if (usandoModoCompuesto && archivoCompuesto) {
+      // Modo compuesto: enviar 1 solo archivo
+      formData.append('archivo_compuesto', archivoCompuesto);
+    } else {
+      // Modo individual
+      formData.append('dni_frente', dniFrente);
+      formData.append('dni_dorso', dniDorso);
+      if (fotoPersona) {
+        formData.append('foto_persona', fotoPersona);
+      }
     }
 
     try {
@@ -638,15 +724,116 @@ export default function Preinscripcion({ onBackToLogin }) {
 
             <div style={{ backgroundColor: 'var(--primary-glow)', border: '1px solid var(--primary-light)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', fontSize: '0.8rem', color: 'var(--primary)' }}>
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontWeight: 600 }}>
-                <Sparkles size={16} /> Validación Biométrica y de DNI
+                <Sparkles size={16} /> Validación Automática de DNI
               </div>
               <p style={{ margin: '0.25rem 0 0 0', color: 'var(--text-muted)' }}>
-                El backend procesará su **DNI frente** usando OCR para verificar la coincidencia con el DNI ingresado, y su **Foto personal** en búsqueda de rostros humanos para certificar su identidad.
+                Puede subir los archivos por separado, o subir un <strong>único archivo</strong> (imagen o PDF) que contenga todos los documentos. El sistema detectará y separará automáticamente cada documento.
               </p>
             </div>
 
-            {/* SECCIÓN DE SUBIDA DE ARCHIVOS */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '2rem' }}>
+            {/* BOTÓN MODO COMPUESTO */}
+            <div style={{ 
+              border: usandoModoCompuesto ? '2px solid var(--primary)' : '1px solid var(--border-color)', 
+              borderRadius: 'var(--radius-md)', 
+              padding: '1rem', 
+              backgroundColor: usandoModoCompuesto ? 'var(--primary-glow)' : 'white',
+              marginBottom: '1rem',
+              transition: 'all 0.3s ease'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <FileText size={16} /> Opción Rápida: Subir Todo Junto
+                  </h4>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Si tiene una foto/escaneo con todos los documentos (DNI frente, dorso, foto), súbalo aquí
+                  </span>
+                </div>
+                <label className="btn btn-primary btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                  {archivoCompuesto ? 'Cambiar Archivo' : 'Seleccionar Archivo'}
+                  <input type="file" style={{ display: 'none' }} accept=".jpg,.jpeg,.png,.pdf" onChange={handleFileChangeCompuesto} />
+                </label>
+              </div>
+
+              {prevCompuesto && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  {prevCompuesto === 'pdf' ? (
+                    <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600 }}>✓ PDF cargado ({archivoCompuesto.name})</span>
+                  ) : (
+                    <img src={prevCompuesto} alt="Archivo compuesto" style={{ height: '80px', borderRadius: '4px', border: '1px solid var(--border-color)', objectFit: 'contain' }} />
+                  )}
+                </div>
+              )}
+
+              {analizandoCompuesto && (
+                <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)', fontSize: '0.85rem' }}>
+                  <Loader2 className="spinner" size={16} />
+                  <span>Analizando archivo compuesto...</span>
+                </div>
+              )}
+
+              {/* Documentos detectados */}
+              {documentosDetectados && documentosDetectados.length > 0 && (
+                <div style={{ marginTop: '1rem', padding: '0.75rem', borderRadius: 'var(--radius-md)', backgroundColor: '#f0fff4', border: '1px solid #c6f6d5' }}>
+                  <h5 style={{ fontSize: '0.8rem', fontWeight: 700, margin: '0 0 0.5rem 0', color: '#276749' }}>
+                    Documentos encontrados ({documentosDetectados.length}):
+                  </h5>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {documentosDetectados.map((doc, idx) => (
+                      <span key={idx} style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: '999px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        backgroundColor: doc.type === 'dni_frente' ? '#ebf8ff' : doc.type === 'dni_dorso' ? '#fefcbf' : '#fed7e2',
+                        color: doc.type === 'dni_frente' ? '#2b6cb0' : doc.type === 'dni_dorso' ? '#975a16' : '#97266d',
+                        border: `1px solid ${doc.type === 'dni_frente' ? '#90cdf4' : doc.type === 'dni_dorso' ? '#f6e05e' : '#fbb6ce'}`,
+                      }}>
+                        <CheckCircle2 size={12} />
+                        {doc.type === 'dni_frente' ? 'DNI Frente' : doc.type === 'dni_dorso' ? 'DNI Dorso' : 'Foto Perfil'}
+                        <span style={{ fontWeight: 400, fontSize: '0.7rem' }}>({Math.round(doc.confidence * 100)}%)</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Datos del DNI extraídos */}
+              {dniDataCompuesto && (
+                <div style={{ marginTop: '1rem', padding: '0.75rem', borderRadius: 'var(--radius-md)', backgroundColor: '#ebf8ff', border: '1px solid #90cdf4' }}>
+                  <h5 style={{ fontSize: '0.8rem', fontWeight: 700, margin: '0 0 0.5rem 0', color: '#2b6cb0', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Sparkles size={14} /> Datos extraídos del DNI:
+                  </h5>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+                    <span><strong>DNI:</strong> {dniDataCompuesto.dni || 'No detectado'}</span>
+                    <span><strong>Nombre:</strong> {dniDataCompuesto.nombre || 'No detectado'}</span>
+                    <span><strong>Apellido:</strong> {dniDataCompuesto.apellido || 'No detectado'}</span>
+                    <span><strong>Fecha Nac.:</strong> {dniDataCompuesto.fecha_nacimiento || 'No detectado'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    style={{ width: '100%' }}
+                    onClick={autoCompletarDesdeCompuesto}
+                  >
+                    Auto-completar formulario con estos datos
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* SEPARADOR */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', margin: '1rem 0', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+              <span>O suba archivos por separado</span>
+              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border-color)' }} />
+            </div>
+
+            {/* SECCIÓN DE SUBIDA DE ARCHIVOS INDIVIDUALES */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '2rem', opacity: usandoModoCompuesto ? 0.5 : 1, pointerEvents: usandoModoCompuesto ? 'none' : 'auto' }}>
               
               {/* 1. DNI Frente */}
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', backgroundColor: 'white' }}>

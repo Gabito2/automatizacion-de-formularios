@@ -12,6 +12,12 @@ try:
 except ImportError:
     PDF_AVAILABLE = False
 
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OCRService")
@@ -809,4 +815,341 @@ class OCRService:
             "nombre": nombre,
             "apellido": apellido,
             "fecha_nacimiento": fecha_nacimiento,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Clasificación de tipo de documento en una imagen
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def classify_document_type(image_path: str) -> dict:
+        """
+        Determina si una imagen contiene un DNI frontal, dorso, foto de perfil u otro documento.
+        Retorna: {"type": "dni_frente"|"dni_dorso"|"foto_perfil"|"desconocido",
+                  "confidence": 0.0-1.0, "region": [x,y,w,h] o None}
+        """
+        try:
+            img = cv2.imread(image_path)
+            if img is None:
+                return {"type": "desconocido", "confidence": 0.0, "region": None}
+
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            h, w = gray.shape
+            total_pixels = h * w
+
+            # Preprocesamiento básico
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 50, 150)
+
+            # Densidad de bordes
+            edge_density = np.sum(edges > 0) / total_pixels
+
+            # Análisis de color (fondo del DNI argentino)
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mean_hue = np.mean(hsv[:, :, 0])
+            mean_saturation = np.mean(hsv[:, :, 1])
+
+            # 1. Verificar si es DNI frontal (keywords en OCR rápido)
+            is_dni_front = False
+            dni_confidence = 0.0
+            try:
+                temp_text, temp_conf = OCRService._extract_with_paddleocr(image_path)
+                if temp_text:
+                    dni_keywords_found = sum(1 for kw in ["APELLIDO", "NOMBRE", "NACIMIENTO", "DNI", "REPUBLICA"] 
+                                             if kw in temp_text.upper())
+                    if dni_keywords_found >= 2:
+                        is_dni_front = True
+                        dni_confidence = min(0.95, 0.6 + (dni_keywords_found * 0.1))
+            except Exception:
+                pass
+
+            if is_dni_front:
+                return {"type": "dni_frente", "confidence": dni_confidence, "region": None}
+
+            # 2. Verificar si es DNI dorso (código de barras + sin keywords de frente)
+            has_barcode = False
+            try:
+                # Detectar líneas horizontales densas (código de barras)
+                horizontal_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+                detected_lines = cv2.morphologyEx(edges, cv2.MORPH_OPEN, horizontal_kernel)
+                line_density = np.sum(detected_lines > 0) / total_pixels
+                has_barcode = line_density > 0.03
+            except Exception:
+                pass
+
+            if has_barcode and not is_dni_front:
+                return {"type": "dni_dorso", "confidence": 0.7, "region": None}
+
+            # 3. Verificar si es foto de perfil (rostro detectado + relación de aspecto)
+            has_face = False
+            if MEDIAPIPE_AVAILABLE:
+                try:
+                    mp_face = mp.solutions.face_detection
+                    with mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.4) as detector:
+                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        results = detector.process(img_rgb)
+                        if results.detections and len(results.detections) == 1:
+                            has_face = True
+                except Exception:
+                    pass
+
+            if not has_face and MEDIAPIPE_AVAILABLE:
+                try:
+                    face_cascade = cv2.CascadeClassifier(
+                        os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+                    )
+                    faces = face_cascade.detectMultiScale(gray, 1.1, 3, minSize=(40, 40))
+                    if len(faces) == 1:
+                        has_face = True
+                except Exception:
+                    pass
+
+            aspect_ratio = w / h if h > 0 else 0
+            is_photo_aspect = 0.6 < aspect_ratio < 0.9 or 1.1 < aspect_ratio < 1.5
+
+            if has_face and is_photo_aspect:
+                return {"type": "foto_perfil", "confidence": 0.8, "region": None}
+
+            return {"type": "desconocido", "confidence": 0.3, "region": None}
+
+        except Exception as e:
+            logger.warning(f"[classify] Error clasificando documento: {e}")
+            return {"type": "desconocido", "confidence": 0.0, "region": None}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Separación de imagen con múltiples documentos
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def split_composite_image(image_path: str) -> list[dict]:
+        """
+        Detecta si una imagen contiene múltiples documentos y los separa.
+        Retorna: [{"type": "dni_frente", "image_path": "temp_crop.png", "region": [x,y,w,h]}, ...]
+        """
+        try:
+            img = cv2.imread(image_path)
+            if img is None:
+                return []
+
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            h, w = gray.shape
+            total_pixels = h * w
+
+            # Preprocesamiento para detectar regiones
+            blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+            _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            # Detectar bordes
+            edges = cv2.Canny(thresh, 30, 100)
+
+            # Dilatar para cerrar gaps en bordes
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+            dilated = cv2.dilate(edges, kernel, iterations=3)
+
+            # Encontrar contornos
+            contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            # Filtrar contornos por área mínima (al menos 5% del área total)
+            min_area = total_pixels * 0.05
+            candidates = []
+            for contour in contours:
+                x, y, cw, ch = cv2.boundingRect(contour)
+                area = cw * ch
+                if area >= min_area and cw > 50 and ch > 50:
+                    candidates.append((x, y, cw, ch))
+
+            # Si no hay candidatos claros, intentar con grid 2x2
+            if len(candidates) < 2:
+                # Dividir la imagen en 4 cuadrantes
+                mid_h, mid_w = h // 2, w // 2
+                candidates = [
+                    (0, 0, mid_w, mid_h),
+                    (mid_w, 0, w - mid_w, mid_h),
+                    (0, mid_h, mid_w, h - mid_h),
+                    (mid_w, mid_h, w - mid_w, h - mid_h),
+                ]
+
+            # Clasificar cada región
+            documents = []
+            temp_dir = tempfile.mkdtemp(prefix="split_")
+
+            for i, (x, y, cw, ch) in enumerate(candidates):
+                crop = img[y:y+ch, x:x+cw]
+                crop_path = os.path.join(temp_dir, f"region_{i}.png")
+                cv2.imwrite(crop_path, crop)
+
+                # Clasificar la región
+                classification = OCRService.classify_document_type(crop_path)
+
+                if classification["type"] != "desconocido" and classification["confidence"] >= 0.5:
+                    documents.append({
+                        "type": classification["type"],
+                        "image_path": crop_path,
+                        "region": [x, y, cw, ch],
+                        "confidence": classification["confidence"],
+                        "temp_dir": temp_dir,
+                    })
+
+            # Si no se clasificó nada, al menos devolver la imagen completa
+            if not documents:
+                classification = OCRService.classify_document_type(image_path)
+                documents.append({
+                    "type": classification["type"],
+                    "image_path": image_path,
+                    "region": [0, 0, w, h],
+                    "confidence": classification["confidence"],
+                    "temp_dir": None,
+                })
+
+            return documents
+
+        except Exception as e:
+            logger.warning(f"[split] Error separando imagen: {e}")
+            return []
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Pipeline completo de extracción desde archivo compuesto
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def extract_from_composite(file_path: str) -> dict:
+        """
+        Pipeline completo:
+        1. Si es PDF → convertir a imágenes
+        2. Para cada imagen → clasificar tipo
+        3. Si imagen compuesta → separar
+        4. En DNI frontal → extraer datos
+        Retorna: {
+            "documents_found": [...],
+            "dni_data": {"dni": "...", "nombre": "...", ...},
+            "confidence": 0.92,
+            "needs_manual_review": False
+        }
+        """
+        try:
+            _, ext = os.path.splitext(file_path)
+            ext = ext.lower()
+
+            all_documents = []
+
+            # Caso PDF: procesar cada página
+            if ext == ".pdf":
+                if not PDF_AVAILABLE:
+                    return {
+                        "documents_found": [],
+                        "dni_data": None,
+                        "confidence": 0.0,
+                        "needs_manual_review": True,
+                        "error": "PyMuPDF no instalado"
+                    }
+
+                page_images = OCRService._pdf_to_images(file_path)
+                try:
+                    for i, page_img in enumerate(page_images):
+                        classification = OCRService.classify_document_type(page_img)
+                        all_documents.append({
+                            "type": classification["type"],
+                            "image_path": page_img,
+                            "page": i + 1,
+                            "confidence": classification["confidence"],
+                        })
+                finally:
+                    OCRService._cleanup_temp_images(page_images)
+
+            # Caso imagen
+            else:
+                # Primero intentar separar si parece compuesta
+                split_docs = OCRService.split_composite_image(file_path)
+
+                if len(split_docs) > 1:
+                    # Imagen compuesta con múltiples documentos
+                    all_documents = split_docs
+                else:
+                    # Imagen simple
+                    classification = OCRService.classify_document_type(file_path)
+                    all_documents.append({
+                        "type": classification["type"],
+                        "image_path": file_path,
+                        "region": None,
+                        "confidence": classification["confidence"],
+                    })
+
+            # Buscar el DNI frontal para extraer datos
+            dni_data = None
+            dni_confidence = 0.0
+            dni_doc = None
+
+            for doc in all_documents:
+                if doc["type"] == "dni_frente":
+                    try:
+                        extracted_text, quality_report = OCRService._extract_from_single_image(doc["image_path"])
+                        if extracted_text.strip():
+                            dni_data = OCRService.parse_dni_text(extracted_text)
+                            dni_confidence = quality_report.get("confidence_avg", 0.0)
+                            dni_doc = doc
+                            break
+                    except Exception as e:
+                        logger.warning(f"[composite] Error extrayendo DNI de {doc['image_path']}: {e}")
+
+            # Determinar si necesita revisión manual
+            needs_manual_review = False
+            if dni_data:
+                if not dni_data.get("dni") or not dni_data.get("nombre"):
+                    needs_manual_review = True
+                elif dni_confidence < 0.6:
+                    needs_manual_review = True
+
+            return {
+                "documents_found": [
+                    {
+                        "type": d["type"],
+                        "region": d.get("region"),
+                        "confidence": d.get("confidence", 0.0),
+                        "page": d.get("page"),
+                    } for d in all_documents
+                ],
+                "dni_data": dni_data,
+                "confidence": dni_confidence,
+                "needs_manual_review": needs_manual_review,
+            }
+
+        except Exception as e:
+            logger.error(f"[composite] Error en pipeline: {e}")
+            return {
+                "documents_found": [],
+                "dni_data": None,
+                "confidence": 0.0,
+                "needs_manual_review": True,
+                "error": str(e),
+            }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Pipeline para análisis de archivo compuesto (endpoint dedicado)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def analyze_composite_file(file_path: str) -> dict:
+        """
+        Analiza un archivo (imagen o PDF) que puede contener múltiples documentos.
+        Retorna los documentos encontrados y los datos extraídos del DNI.
+        """
+        result = OCRService.extract_from_composite(file_path)
+
+        # Agregar previews de cada documento encontrado
+        documents_with_preview = []
+        for doc in result.get("documents_found", []):
+            doc_info = {
+                "type": doc["type"],
+                "region": doc.get("region"),
+                "confidence": doc.get("confidence", 0.0),
+                "page": doc.get("page"),
+            }
+            documents_with_preview.append(doc_info)
+
+        return {
+            "documents": documents_with_preview,
+            "dni_data": result.get("dni_data"),
+            "confidence": result.get("confidence", 0.0),
+            "needs_manual_review": result.get("needs_manual_review", True),
+            "error": result.get("error"),
         }

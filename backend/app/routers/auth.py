@@ -370,14 +370,16 @@ def register_student(
     secundario_completo: str = Form(...),
     titulo_secundario: str = Form(...),
     password: str = Form(...),
-    dni_frente: UploadFile = File(...),
-    dni_dorso: UploadFile = File(...),
+    dni_frente: UploadFile = File(None),
+    dni_dorso: UploadFile = File(None),
     foto_persona: UploadFile = File(None),
+    archivo_compuesto: UploadFile = File(None),
     db: Session = Depends(get_db)
 ):
     """
     Registra/preinscribe un nuevo estudiante.
-    Realiza detección facial en la foto personal (opcional) y validación OCR en el DNI frontal.
+    Acepta archivos individuales (dni_frente, dni_dorso, foto_persona) O un archivo compuesto
+    que contiene todos los documentos. Realiza validación OCR en el DNI frontal.
     """
     # 1. Verificar si el DNI ya existe
     existing_user = db.query(Usuario).filter(Usuario.dni == dni).first()
@@ -387,55 +389,123 @@ def register_student(
             detail="El número de DNI ingresado ya se encuentra registrado."
         )
 
-    # 2. Validar extensiones de archivo
+    # 2. Validar que se haya proporcionado al menos un método de carga
+    has_compuesto = archivo_compuesto is not None
+    has_individual = dni_frente is not None and dni_dorso is not None
+
+    if not has_compuesto and not has_individual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe proporcionar los archivos individuales (DNI frente y dorso) o un archivo compuesto."
+        )
+
+    # 3. Validar extensiones de archivo
     image_exts = {".jpg", ".jpeg", ".png"}
     dni_exts = {".pdf", ".jpg", ".jpeg", ".png"}
 
-    for file_item, label in [(dni_frente, "DNI Frente"), (dni_dorso, "DNI Dorso")]:
-        _, ext = os.path.splitext(file_item.filename)
+    # Variables para guardar paths
+    saved_frente = None
+    saved_dorso = None
+    saved_persona = None
+    saved_paths_compuesto = None
+
+    if has_compuesto:
+        # Validar extensión del archivo compuesto
+        _, ext = os.path.splitext(archivo_compuesto.filename)
         ext = ext.lower()
         if ext not in dni_exts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Formato no permitido para {label}. Solo se aceptan PDFs e imágenes."
+                detail="Formato no permitido para el archivo compuesto. Solo se aceptan PDFs e imágenes."
             )
 
-    if foto_persona is not None:
-        _, ext = os.path.splitext(foto_persona.filename)
-        ext = ext.lower()
-        if ext not in image_exts:
+        # Procesar archivo compuesto
+        temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos", "temp"))
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_path = os.path.join(temp_dir, f"temp_compuesto_{random.randint(1000, 9999)}{ext}")
+
+        try:
+            with open(temp_path, "wb") as buffer:
+                shutil.copyfileobj(archivo_compuesto.file, buffer)
+
+            # Analizar archivo compuesto
+            composite_result = OCRService.analyze_composite_file(temp_path)
+
+            # Guardar documentos extraídos
+            if composite_result.get("documents"):
+                from app.utils.file_manager import save_composite_documents
+                saved_paths_compuesto = save_composite_documents(
+                    carrera, dni, composite_result["documents"], archivo_compuesto
+                )
+                saved_frente = saved_paths_compuesto.get("dni_frente")
+                saved_dorso = saved_paths_compuesto.get("dni_dorso")
+                saved_persona = saved_paths_compuesto.get("foto_4x4")
+            else:
+                # Si no se detectaron documentos, guardar el archivo original como dni_frente
+                saved_frente = save_document_file(carrera, dni, "dni_frente", archivo_compuesto)
+
+        except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La foto personal debe ser una imagen (.jpg, .jpeg, .png)."
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al procesar el archivo compuesto: {str(e)}"
             )
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    else:
+        # Modo individual: validar extensiones
+        for file_item, label in [(dni_frente, "DNI Frente"), (dni_dorso, "DNI Dorso")]:
+            _, ext = os.path.splitext(file_item.filename)
+            ext = ext.lower()
+            if ext not in dni_exts:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Formato no permitido para {label}. Solo se aceptan PDFs e imágenes."
+                )
 
-    # 3. Guardar archivos en el legajo
-    try:
-        saved_frente = save_document_file(carrera, dni, "dni_frente", dni_frente)
-        saved_dorso = save_document_file(carrera, dni, "dni_dorso", dni_dorso)
-        saved_persona = None
         if foto_persona is not None:
-            saved_persona = save_document_file(carrera, dni, "foto_4x4", foto_persona)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al guardar los archivos de la preinscripción: {str(e)}"
-        )
+            _, ext = os.path.splitext(foto_persona.filename)
+            ext = ext.lower()
+            if ext not in image_exts:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="La foto personal debe ser una imagen (.jpg, .jpeg, .png)."
+                )
+
+        # Guardar archivos individuales
+        try:
+            saved_frente = save_document_file(carrera, dni, "dni_frente", dni_frente)
+            saved_dorso = save_document_file(carrera, dni, "dni_dorso", dni_dorso)
+            if foto_persona is not None:
+                saved_persona = save_document_file(carrera, dni, "foto_4x4", foto_persona)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al guardar los archivos de la preinscripción: {str(e)}"
+            )
 
     # Obtener rutas físicas absolutas para procesamiento
-    absolute_frente = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_frente))
-    user_dir = os.path.dirname(absolute_frente)
+    absolute_frente = None
+    user_dir = None
+    if saved_frente:
+        absolute_frente = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_frente))
+        user_dir = os.path.dirname(absolute_frente)
 
     # 4. Validación Facial en la foto personal (solo si se subió)
     face_check = {"has_face": False, "confidence": 0.0, "method_used": "none"}
-    if foto_persona is not None and saved_persona:
+    if saved_persona:
         absolute_persona = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_persona))
-        _, persona_ext = os.path.splitext(foto_persona.filename)
+        # Determinar extensión de la foto
+        if foto_persona:
+            _, persona_ext = os.path.splitext(foto_persona.filename)
+        elif has_compuesto:
+            persona_ext = ".jpg"  # Default para fotos extraídas de compuesto
+        else:
+            persona_ext = ".jpg"
         if persona_ext.lower() in image_exts:
             face_check = FaceService.detect_face(absolute_persona)
-            if not face_check.get("has_face"):
-                if os.path.exists(user_dir):
-                    shutil.rmtree(user_dir)
+            if not face_check.get("has_face") and user_dir and os.path.exists(user_dir):
+                shutil.rmtree(user_dir)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=(
@@ -445,14 +515,20 @@ def register_student(
                 )
 
     # 5. Validación OCR del DNI Frente (imágenes Y PDFs)
-    _, frente_ext = os.path.splitext(dni_frente.filename)
     ocr_results = None
     quality_report = None
     ocr_dni_observado = False
     ocr_observacion_msg = None
 
     ocr_extensions = {".jpg", ".jpeg", ".png", ".pdf"}
-    if frente_ext.lower() in ocr_extensions:
+
+    # Determinar qué archivo usar para OCR
+    ocr_file_path = absolute_frente
+    ocr_file_ext = None
+    if ocr_file_path:
+        _, ocr_file_ext = os.path.splitext(ocr_file_path)
+
+    if ocr_file_path and ocr_file_ext and ocr_file_ext.lower() in ocr_extensions:
         user_info = {
             "dni": dni,
             "nombre": nombre,
@@ -460,7 +536,7 @@ def register_student(
             "fecha_nacimiento": fecha_nacimiento
         }
         try:
-            extracted_text, quality_report = OCRService.extract_text(absolute_frente, user_info)
+            extracted_text, quality_report = OCRService.extract_text(ocr_file_path, user_info)
             ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
 
             if quality_report and (quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright")):
@@ -531,22 +607,26 @@ def register_student(
             estado_frente = "pendiente"
             obs_frente = None
 
-        doc_frente = Documento(
-            usuario_id=new_user.id,
-            tipo_documento="dni_frente",
-            archivo_url=saved_frente,
-            estado=estado_frente,
-            observacion=obs_frente
-        )
-        db.add(doc_frente)
+        # Registrar DNI Frente (si existe)
+        if saved_frente:
+            doc_frente = Documento(
+                usuario_id=new_user.id,
+                tipo_documento="dni_frente",
+                archivo_url=saved_frente,
+                estado=estado_frente,
+                observacion=obs_frente
+            )
+            db.add(doc_frente)
 
-        doc_dorso = Documento(
-            usuario_id=new_user.id,
-            tipo_documento="dni_dorso",
-            archivo_url=saved_dorso,
-            estado="pendiente"
-        )
-        db.add(doc_dorso)
+        # Registrar DNI Dorso (si existe)
+        if saved_dorso:
+            doc_dorso = Documento(
+                usuario_id=new_user.id,
+                tipo_documento="dni_dorso",
+                archivo_url=saved_dorso,
+                estado="pendiente"
+            )
+            db.add(doc_dorso)
 
         # Foto personal (opcional)
         if saved_persona is not None:
@@ -587,3 +667,53 @@ def register_student(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al registrar la preinscripción en el sistema: {str(ex)}"
         )
+
+
+@router.post("/analizar-archivo-compuesto")
+def analizar_archivo_compuesto(
+    file: UploadFile = File(...),
+):
+    """
+    Analiza un archivo (imagen o PDF) que puede contener múltiples documentos
+    (DNI frontal, dorso, foto de perfil) en un solo archivo.
+    
+    Retorna los documentos encontrados y los datos extraídos del DNI frontal.
+    Útil cuando el alumno sube una foto donde se ven todos los documentos juntos,
+    o un PDF multi-página con cada documento en una página diferente.
+    """
+    allowed_extensions = {".jpg", ".jpeg", ".png", ".pdf"}
+    filename = file.filename
+    _, ext = os.path.splitext(filename)
+    ext = ext.lower()
+
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de archivo no permitido. Solo se aceptan imágenes JPG, PNG y PDFs."
+        )
+
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "legajos", "temp"))
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_path = os.path.join(temp_dir, f"temp_composite_{random.randint(1000, 9999)}{ext}")
+
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        result = OCRService.analyze_composite_file(temp_path)
+
+        return {
+            "documents": result.get("documents", []),
+            "dni_data": result.get("dni_data"),
+            "confidence": result.get("confidence", 0.0),
+            "needs_manual_review": result.get("needs_manual_review", True),
+            "error": result.get("error"),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al analizar el archivo compuesto: {str(e)}"
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
