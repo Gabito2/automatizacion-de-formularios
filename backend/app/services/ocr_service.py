@@ -28,18 +28,40 @@ MIN_CONFIDENCE = 0.75
 # ── MOTOR PRIMARIO: PaddleOCR ──────────────────────────────────────────────────
 try:
     from paddleocr import PaddleOCR
+    import paddleocr as _paddleocr_pkg
+
+    _paddleocr_version = getattr(_paddleocr_pkg, "__version__", "3")
+    _PADDLEOCR_IS_V3 = True  # PaddleOCR 3.x usa el pipeline PaddleX (predict -> rec_texts/rec_scores)
+    try:
+        _PADDLEOCR_IS_V3 = int(str(_paddleocr_version).split(".")[0]) >= 3
+    except Exception:
+        _PADDLEOCR_IS_V3 = True
+
     _paddleocr_reader = None
 
     def _get_paddleocr_reader():
         global _paddleocr_reader
         if _paddleocr_reader is None:
             logger.info("Inicializando PaddleOCR (primera carga, puede tardar)...")
-            _paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='es', show_log=False)
+            if _PADDLEOCR_IS_V3:
+                # API de PaddleOCR 3.x: no acepta use_angle_cls/show_log de la v2.
+                # enable_mkldnn=False evita un crash del ejecutor oneDNN en paddle 3.x
+                # (ConvertPirAttribute2RuntimeAttribute no implementado).
+                _paddleocr_reader = PaddleOCR(
+                    lang="es",
+                    use_doc_orientation_classify=True,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=True,
+                    enable_mkldnn=False,
+                )
+            else:
+                # API legacy de PaddleOCR 2.x
+                _paddleocr_reader = PaddleOCR(use_angle_cls=True, lang="es", show_log=False)
             logger.info("PaddleOCR listo.")
         return _paddleocr_reader
 
     PADDLEOCR_AVAILABLE = True
-    logger.info("PaddleOCR disponible (motor primario).")
+    logger.info(f"PaddleOCR disponible (motor primario, versión {_paddleocr_version}).")
 except ImportError:
     PADDLEOCR_AVAILABLE = False
     logger.warning("PaddleOCR no disponible.")
@@ -248,21 +270,56 @@ class OCRService:
 
     @staticmethod
     def _extract_with_paddleocr(image_path: str) -> tuple[str, float]:
-        """Extrae texto con PaddleOCR filtrando por confianza mínima."""
+        """Extrae texto con PaddleOCR filtrando por confianza mínima.
+
+        Compatible con la API de PaddleOCR 3.x (pipeline PaddleX: predict() ->
+        resultados con rec_texts/rec_scores) y con la API legacy de la v2
+        (ocr() -> [[[box, (text, conf)], ...]]).
+        """
         reader = _get_paddleocr_reader()
-        result = reader.ocr(image_path, cls=True)
         lines, confidences = [], []
-        if result and result[0]:
-            for line in result[0]:
-                if len(line) < 2:
-                    continue
-                text, confidence = line[1]
-                confidence = float(confidence)
-                if confidence >= MIN_CONFIDENCE:
-                    lines.append(str(text).strip())
-                    confidences.append(confidence)
-                else:
-                    logger.debug(f"[PaddleOCR] Descartado (conf={confidence:.2f}): '{text}'")
+
+        # ── PaddleOCR 3.x / PaddleX ──────────────────────────────────────────
+        if _PADDLEOCR_IS_V3:
+            try:
+                results = reader.predict(image_path)
+                for res in results:
+                    data = res.json if hasattr(res, "json") else (res if isinstance(res, dict) else {})
+                    # En 3.7.0 el JSON real anida todo bajo "res"
+                    nested = data.get("res")
+                    if isinstance(nested, dict) and "rec_texts" in nested:
+                        data = nested
+                    texts = data.get("rec_texts") or []
+                    scores = data.get("rec_scores") or []
+                    for text, confidence in zip(texts, scores):
+                        confidence = float(confidence)
+                        if confidence >= MIN_CONFIDENCE:
+                            lines.append(str(text).strip())
+                            confidences.append(confidence)
+                        else:
+                            logger.debug(f"[PaddleOCR] Descartado (conf={confidence:.2f}): '{text}'")
+            except Exception as e:
+                logger.warning(f"[PaddleOCR] Error al extraer texto (API 3.x): {e}")
+                return "", 0.0
+        # ── PaddleOCR 2.x (API legacy) ───────────────────────────────────────
+        else:
+            try:
+                result = reader.ocr(image_path, cls=True)
+                if result and result[0]:
+                    for line in result[0]:
+                        if len(line) < 2:
+                            continue
+                        text, confidence = line[1]
+                        confidence = float(confidence)
+                        if confidence >= MIN_CONFIDENCE:
+                            lines.append(str(text).strip())
+                            confidences.append(confidence)
+                        else:
+                            logger.debug(f"[PaddleOCR] Descartado (conf={confidence:.2f}): '{text}'")
+            except Exception as e:
+                logger.warning(f"[PaddleOCR] Error al extraer texto (API 2.x): {e}")
+                return "", 0.0
+
         extracted_text = "\n".join(lines)
         avg_confidence = float(np.mean(confidences)) if confidences else 0.0
         logger.info(f"[PaddleOCR] {len(lines)} bloques aceptados (conf_avg={avg_confidence:.2f}).")
@@ -852,16 +909,17 @@ class OCRService:
             # 1. Verificar si es DNI frontal (keywords en OCR rápido)
             is_dni_front = False
             dni_confidence = 0.0
-            try:
-                temp_text, temp_conf = OCRService._extract_with_paddleocr(image_path)
-                if temp_text:
-                    dni_keywords_found = sum(1 for kw in ["APELLIDO", "NOMBRE", "NACIMIENTO", "DNI", "REPUBLICA"] 
-                                             if kw in temp_text.upper())
-                    if dni_keywords_found >= 2:
-                        is_dni_front = True
-                        dni_confidence = min(0.95, 0.6 + (dni_keywords_found * 0.1))
-            except Exception:
-                pass
+            if PADDLEOCR_AVAILABLE:
+                try:
+                    temp_text, temp_conf = OCRService._extract_with_paddleocr(image_path)
+                    if temp_text:
+                        dni_keywords_found = sum(1 for kw in ["APELLIDO", "NOMBRE", "NACIMIENTO", "DNI", "REPUBLICA"] 
+                                                 if kw in temp_text.upper())
+                        if dni_keywords_found >= 2:
+                            is_dni_front = True
+                            dni_confidence = min(0.95, 0.6 + (dni_keywords_found * 0.1))
+                except Exception:
+                    pass
 
             if is_dni_front:
                 return {"type": "dni_frente", "confidence": dni_confidence, "region": None}
@@ -1031,6 +1089,7 @@ class OCRService:
             ext = ext.lower()
 
             all_documents = []
+            temp_dirs = set()
 
             # Caso PDF: procesar cada página
             if ext == ".pdf":
@@ -1043,18 +1102,19 @@ class OCRService:
                         "error": "PyMuPDF no instalado"
                     }
 
+                # Las imágenes de página NO se limpian aquí: el caller debe
+                # llamar a cleanup_composite_files() luego de guardar/copiar.
                 page_images = OCRService._pdf_to_images(file_path)
-                try:
-                    for i, page_img in enumerate(page_images):
-                        classification = OCRService.classify_document_type(page_img)
-                        all_documents.append({
-                            "type": classification["type"],
-                            "image_path": page_img,
-                            "page": i + 1,
-                            "confidence": classification["confidence"],
-                        })
-                finally:
-                    OCRService._cleanup_temp_images(page_images)
+                if page_images:
+                    temp_dirs.add(os.path.dirname(page_images[0]))
+                for i, page_img in enumerate(page_images):
+                    classification = OCRService.classify_document_type(page_img)
+                    all_documents.append({
+                        "type": classification["type"],
+                        "image_path": page_img,
+                        "page": i + 1,
+                        "confidence": classification["confidence"],
+                    })
 
             # Caso imagen
             else:
@@ -1064,6 +1124,10 @@ class OCRService:
                 if len(split_docs) > 1:
                     # Imagen compuesta con múltiples documentos
                     all_documents = split_docs
+                    for doc in split_docs:
+                        td = doc.get("temp_dir")
+                        if td:
+                            temp_dirs.add(td)
                 else:
                     # Imagen simple
                     classification = OCRService.classify_document_type(file_path)
@@ -1106,11 +1170,13 @@ class OCRService:
                         "region": d.get("region"),
                         "confidence": d.get("confidence", 0.0),
                         "page": d.get("page"),
+                        "image_path": d.get("image_path"),
                     } for d in all_documents
                 ],
                 "dni_data": dni_data,
                 "confidence": dni_confidence,
                 "needs_manual_review": needs_manual_review,
+                "temp_dirs": sorted(temp_dirs),
             }
 
         except Exception as e:
@@ -1128,14 +1194,44 @@ class OCRService:
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
+    def cleanup_composite_files(documents: list[dict] = None, temp_dirs: list[str] = None) -> None:
+        """
+        Elimina los archivos temporales (y directorios vacíos) generados durante
+        el análisis de archivos compuestos: páginas de PDF y recortes de split.
+        Debe llamarse luego de copiar/guardar los documentos en el legajo.
+        """
+        dirs = set(temp_dirs or [])
+
+        for doc in documents or []:
+            path = doc.get("image_path")
+            if not path:
+                continue
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except Exception:
+                pass
+            dirs.add(os.path.dirname(path))
+
+        for d in dirs:
+            try:
+                if d and os.path.isdir(d) and not os.listdir(d):
+                    os.rmdir(d)
+            except Exception:
+                pass
+
+    @staticmethod
     def analyze_composite_file(file_path: str) -> dict:
         """
         Analiza un archivo (imagen o PDF) que puede contener múltiples documentos.
         Retorna los documentos encontrados y los datos extraídos del DNI.
+
+        Los documentos incluyen la clave "image_path" (ruta temporal) para que
+        el caller pueda guardarlos; debe liberarse luego con cleanup_composite_files().
         """
         result = OCRService.extract_from_composite(file_path)
 
-        # Agregar previews de cada documento encontrado
+        # Previews de cada documento encontrado
         documents_with_preview = []
         for doc in result.get("documents_found", []):
             doc_info = {
@@ -1143,6 +1239,7 @@ class OCRService:
                 "region": doc.get("region"),
                 "confidence": doc.get("confidence", 0.0),
                 "page": doc.get("page"),
+                "image_path": doc.get("image_path"),
             }
             documents_with_preview.append(doc_info)
 
@@ -1152,4 +1249,5 @@ class OCRService:
             "confidence": result.get("confidence", 0.0),
             "needs_manual_review": result.get("needs_manual_review", True),
             "error": result.get("error"),
+            "temp_dirs": result.get("temp_dirs", []),
         }

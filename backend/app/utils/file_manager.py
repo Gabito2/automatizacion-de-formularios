@@ -42,8 +42,9 @@ def save_document_file(carrera: str, dni: str, tipo_documento: str, file: Upload
     new_filename = f"{tipo_documento}{ext.lower()}"
     file_path = os.path.join(user_dir, new_filename)
     
-    # Guardar archivo en disco
+    # Guardar archivo en disco (rebobinar el stream para leer desde el inicio)
     with open(file_path, "wb") as buffer:
+        file.file.seek(0)
         buffer.write(file.file.read())
         
     # Retornar ruta relativa desde el directorio backend/ para acceso estático o descarga

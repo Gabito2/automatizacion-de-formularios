@@ -33,8 +33,10 @@ numpy==2.4.6                    # Operaciones matriciales para visión
 PyMuPDF==1.28.0                 # Conversión de PDF a imagen para OCR
 
 # Motor OCR primario: PaddleOCR (mejor precisión + score de confianza por palabra)
+# El código soporta la API de PaddleOCR 3.x (pipeline PaddleX) y la legacy 2.x.
+# Evitar la v4 (API cambiante); dentro de 3.x se usa lang='es' con PP-OCRv4/v5.
 paddlepaddle                    # Framework base de PaddleOCR (CPU, sin GPU)
-paddleocr>=2.7.0                # OCR con soporte multilenguaje y detección de layout
+paddleocr>=3.0.0,<4.0.0         # OCR con soporte multilenguaje y detección de layout
 
 # Motor OCR secundario/fallback
 easyocr>=1.7.0                  # Fallback: OCR con soporte español/inglés

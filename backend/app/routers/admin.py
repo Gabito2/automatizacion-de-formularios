@@ -75,9 +75,14 @@ def importar_estudiantes(
     for idx, row in df.iterrows():
         try:
             # Sanitizar valores de la fila
-            dni_raw = str(row['dni']).split('.')[0].strip()  # Evitar que floats de excel pongan decimales
-            # Eliminar espacios extras del DNI
-            dni = re.sub(r'\D', '', dni_raw)
+            # Excel suele traer el DNI como float (ej: 4.5e7 o 45123456.0) o NaN.
+            # str(float) puede dar notación científica ("4.5e+07") que rompe el parseo.
+            dni_raw = row['dni']
+            if isinstance(dni_raw, float) and dni_raw.is_integer():
+                dni_raw = int(dni_raw)
+            elif pd.isna(dni_raw):
+                dni_raw = ""
+            dni = re.sub(r'\D', '', str(dni_raw))
             email = str(row['email']).strip()
             nombre = str(row['nombre']).strip()
             apellido = str(row['apellido']).strip()
@@ -165,9 +170,11 @@ def get_legajos(
         docs = s.documentos
         docs_uploaded = {doc.tipo_documento: doc for doc in docs}
         
-        # Calcular estado general del legajo
+        # Calcular estado general del legajo.
+        # "todo_subido" verifica que estén presentes TODOS los tipos obligatorios,
+        # no que la cantidad de archivos coincida (un documento extra rompía el conteo).
+        todo_subido = all(tipo in docs_uploaded for tipo in tipos_obligatorios)
         estados_cargados = [doc.estado for doc in docs]
-        todo_subido = len(docs) == len(tipos_obligatorios)
         
         if "rechazado" in estados_cargados or "observado" in estados_cargados:
             estado_general = "observado"
@@ -240,7 +247,15 @@ def aprobar_documento(
     ]
     
     all_docs = student.documentos
-    todo_aprobado = len(all_docs) == len(tipos_obligatorios) and all(d.estado == "aprobado" for d in all_docs)
+    # Verificar que estén todos los obligatorios y que estén aprobados
+    tipos_presentes = {d.tipo_documento for d in all_docs}
+    obligatorios_aprobados = [
+        d for d in all_docs if d.tipo_documento in tipos_obligatorios and d.estado == "aprobado"
+    ]
+    todo_aprobado = (
+        all(t in tipos_presentes for t in tipos_obligatorios)
+        and len(obligatorios_aprobados) == len(tipos_obligatorios)
+    )
     
     if todo_aprobado:
         # Notificar al estudiante que su legajo ha sido aprobado completamente

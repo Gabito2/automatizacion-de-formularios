@@ -1,6 +1,7 @@
 import os
 import base64
 import random
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -12,6 +13,14 @@ from app.utils.file_manager import save_document_file
 from app.services.ocr_service import OCRService
 
 router = APIRouter(prefix="/estudiante", tags=["estudiante"])
+logger = logging.getLogger("EstudianteRouter")
+
+# Tipos de documento válidos del legajo. Se valida estrictamente para evitar
+# path traversal cuando el valor de tipo_documento se usa en rutas/nombres de archivo.
+TIPOS_DOCUMENTO_VALIDOS = {
+    "dni_frente", "dni_dorso", "foto_4x4",
+    "analitico_secundario", "partida_nacimiento", "formulario_inscripcion",
+}
 
 class ImageBase64Request(BaseModel):
     tipo_documento: str
@@ -166,8 +175,8 @@ def actualizar_datos_dni(
                         
                 db.commit()
             except Exception as e:
-                # Si falla, simplemente loguear
-                pass
+                # Si falla la re-validación, loguear para diagnóstico
+                logger.warning(f"Error al re-evaluar OCR tras actualizar datos de DNI: {e}")
 
     return {
         "message": "Datos de identidad actualizados correctamente y validación de DNI re-evaluada.",
@@ -190,6 +199,13 @@ def upload_document(
     Sube un documento obligatorio para la conformación del legajo digital.
     Realiza validaciones de tamaño y extensión, y ejecuta el OCR si es DNI.
     """
+    # 0. Validar tipo de documento (evita path traversal al usarse en rutas)
+    if tipo_documento not in TIPOS_DOCUMENTO_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tipo de documento no válido."
+        )
+
     # 1. Validaciones básicas de archivo
     allowed_extensions = {".pdf", ".jpg", ".jpeg", ".png"}
     filename = file.filename
@@ -269,15 +285,21 @@ def upload_document(
             "fecha_nacimiento": current_student.datos_personales.fecha_nacimiento if current_student.datos_personales else None
         }
         
-        extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
-        
-        # Validar coincidencia de datos
-        ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
-        ocr_extracted_fields = OCRService.parse_dni_text(extracted_text)
-        
+        try:
+            extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
+
+            # Validar coincidencia de datos
+            ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
+            ocr_extracted_fields = OCRService.parse_dni_text(extracted_text)
+        except Exception as e:
+            logger.warning(f"Error en OCR al subir documento {tipo_documento}: {e}")
+            quality_report = None
+            ocr_results = None
+            ocr_extracted_fields = None
+
         # Guardar resultados o reportar directo al estudiante
         # Si la calidad de imagen es pésima (ej: muy borroso o muy oscuro), podemos marcarlo de forma asistida
-        if quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright"):
+        if quality_report and (quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright")):
             doc_record.estado = "observado"
             doc_record.observacion = "El sistema detectó baja calidad de imagen (imagen borrosa o con iluminación deficiente). Por favor, cargue una imagen clara."
             
@@ -363,7 +385,8 @@ def get_estado_legajo(
     # Si están todos aprobados -> "aprobado"
     
     estados_cargados = [doc.estado for doc in docs]
-    todo_subido = len(docs) == len(tipos_obligatorios)
+    # "todo_subido" verifica presencia de TODOS los tipos obligatorios, no el conteo.
+    todo_subido = all(tipo in docs_uploaded for tipo in tipos_obligatorios)
     
     if "rechazado" in estados_cargados or "observado" in estados_cargados:
         estado_general = "observado"
@@ -416,6 +439,14 @@ def upload_document_camara(
     El procesamiento de OCR y guardado es idéntico al endpoint de subida de archivo.
     """
     tipo_documento = data.tipo_documento
+
+    # Validar tipo de documento (evita path traversal al usarse en rutas)
+    if tipo_documento not in TIPOS_DOCUMENTO_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tipo de documento no válido."
+        )
+
     allowed_extensions = {".jpg", ".jpeg", ".png"}
     _, ext = os.path.splitext(data.filename)
     ext = ext.lower() or ".jpg"
@@ -503,11 +534,17 @@ def upload_document_camara(
             "apellido": current_student.apellido,
             "fecha_nacimiento": current_student.datos_personales.fecha_nacimiento if current_student.datos_personales else None
         }
-        extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
-        ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
-        ocr_extracted_fields = OCRService.parse_dni_text(extracted_text)
+        try:
+            extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
+            ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
+            ocr_extracted_fields = OCRService.parse_dni_text(extracted_text)
+        except Exception as e:
+            logger.warning(f"Error en OCR al subir documento de cámara {tipo_documento}: {e}")
+            quality_report = None
+            ocr_results = None
+            ocr_extracted_fields = None
 
-        if quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright"):
+        if quality_report and (quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright")):
             doc_record.estado = "observado"
             doc_record.observacion = "El sistema detectó baja calidad de imagen. Por favor, capture una imagen más clara."
             obs = Observacion(

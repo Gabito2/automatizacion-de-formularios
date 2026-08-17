@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { adminAPI } from '../services/api';
-import { 
-  FileSpreadsheet, Users, FileCheck, FileWarning, Search, 
-  Filter, Check, X, Eye, LogOut, ArrowRight, Download, 
-  HelpCircle, AlertCircle, Info, Calendar, Phone, MapPin, 
-  Award, Loader2, Sparkles, GraduationCap, UploadCloud,
-  RefreshCw, FileText
+import { useState, useEffect } from 'react';
+import { adminAPI, API_URL } from '../services/api';
+import {
+  FileSpreadsheet, Users, FileCheck, FileWarning, Search,
+  Filter, Check, X, Eye, LogOut,
+  AlertCircle, Info, Sparkles, GraduationCap, UploadCloud,
+  Loader2, RefreshCw, FileText
 } from 'lucide-react';
 
 export default function AdminDashboard({ user, onLogout }) {
@@ -64,14 +63,12 @@ export default function AdminDashboard({ user, onLogout }) {
       const incompletos = allData.filter(l => l.estado_general === 'incompleto').length;
       
       setStats({ total, aprobados, observados, pendientes, incompletos });
-    } catch (err) {
+    } catch {
       setError('Error al obtener la lista de legajos.');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
+  };  useEffect(() => {
     cargarLegajos();
   }, [filtroCarrera, filtroEstado]);
 
@@ -105,7 +102,7 @@ export default function AdminDashboard({ user, onLogout }) {
     setVerificandoLoading(true);
     setError('');
     try {
-      const res = await adminAPI.aprobarDocumento(docId);
+      await adminAPI.aprobarDocumento(docId);
       
       // Actualizar el estudiante seleccionado localmente
       if (selectedStudent) {
@@ -116,16 +113,21 @@ export default function AdminDashboard({ user, onLogout }) {
           return d;
         });
         
-        // Comprobar si completó el legajo
+        // Comprobar si completó el legajo (los 6 tipos obligatorios aprobados)
+        const tiposObligatorios = ['dni_frente', 'dni_dorso', 'foto_4x4', 'analitico_secundario', 'partida_nacimiento', 'formulario_inscripcion'];
+        const tiposPresentes = new Set(updatedDocs.map(d => d.tipo_documento));
+        const todosSubidos = tiposObligatorios.every(t => tiposPresentes.has(t));
+        const todosAprobados = updatedDocs
+          .filter(d => tiposObligatorios.includes(d.tipo_documento))
+          .every(d => d.estado === 'aprobado');
+        const todoAprobado = todosSubidos && todosAprobados;
+
         let nuevoEstadoLegajo = selectedStudent.estado_general;
-        const totalDocs = updatedDocs.length;
-        const todoAprobado = updatedDocs.filter(d => d.estado === 'aprobado').length === 6;
-        
         if (todoAprobado) {
           nuevoEstadoLegajo = 'aprobado';
         } else if (updatedDocs.some(d => d.estado === 'observado')) {
           nuevoEstadoLegajo = 'observado';
-        } else if (totalDocs === 6) {
+        } else if (todosSubidos) {
           nuevoEstadoLegajo = 'pendiente';
         } else {
           nuevoEstadoLegajo = 'incompleto';
@@ -144,7 +146,7 @@ export default function AdminDashboard({ user, onLogout }) {
       }
       
       await cargarLegajos();
-    } catch (err) {
+    } catch {
       setError('No se pudo aprobar el documento.');
     } finally {
       setVerificandoLoading(false);
@@ -192,7 +194,7 @@ export default function AdminDashboard({ user, onLogout }) {
       setDocToRechazar(null);
       setMensajeRechazo('');
       await cargarLegajos();
-    } catch (err) {
+    } catch {
       setError('No se pudo guardar la observación del documento.');
     } finally {
       setVerificandoLoading(false);
@@ -206,42 +208,6 @@ export default function AdminDashboard({ user, onLogout }) {
     analitico_secundario: 'Analítico Secundario',
     partida_nacimiento: 'Partida de Nacimiento',
     formulario_inscripcion: 'Formulario de Inscripción'
-  };
-
-  // Extrae y simula los datos de OCR de un DNI Frente
-  const getOCRReportForStudent = (student) => {
-    if (!student || !student.tiene_datos_personales || !student.datos_personales) {
-      return null;
-    }
-    const dni = student.dni;
-    const nombre = student.nombre;
-    const apellido = student.apellido;
-    const fecha_nac = student.datos_personales.fecha_nacimiento;
-    
-    // Mapear DNI formateado
-    const dni_formatted = fDni(dni);
-    const dob_formatted = fDob(fecha_nac);
-    
-    return {
-      declarado: {
-        dni: dni,
-        nombre: nombre,
-        apellido: apellido,
-        fecha_nacimiento: dob_formatted
-      },
-      ocr: {
-        dni: dni_formatted,
-        nombre: nombre.toUpperCase(),
-        apellido: apellido.toUpperCase(),
-        fecha_nacimiento: dob_formatted
-      },
-      match: {
-        dni_match: true,
-        name_match: true,
-        lastname_match: true,
-        dob_match: true
-      }
-    };
   };
 
   const fDni = (dni) => {
@@ -258,7 +224,9 @@ export default function AdminDashboard({ user, onLogout }) {
       if (parts.length === 3) {
         return `${parts[2]}/${parts[1]}/${parts[0]}`;
       }
-    } catch(e) {}
+    } catch {
+      // ignorar formato inesperado: devolver el valor original
+    }
     return dob;
   };
 
@@ -658,7 +626,7 @@ export default function AdminDashboard({ user, onLogout }) {
                         <FileText size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 0.5rem auto' }} />
                         <p style={{ fontSize: '0.8rem', fontWeight: 600 }}>Archivo en Formato PDF</p>
                         <a 
-                          href={`http://localhost:8000/${activeDocPreview.archivo_url}`} 
+                          href={`${API_URL}/${activeDocPreview.archivo_url}`} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="btn btn-secondary btn-sm"
@@ -669,52 +637,18 @@ export default function AdminDashboard({ user, onLogout }) {
                       </div>
                     ) : (
                       <img 
-                        src={`http://localhost:8000/${activeDocPreview.archivo_url}`} 
+                        src={`${API_URL}/${activeDocPreview.archivo_url}`} 
                         alt={nombresDocumentos[activeDocPreview.tipo_documento]} 
                         style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
                       />
                     )}
                   </div>
 
-                  {/* ASISTENTE OCR COINCIDENCIAS (Solo para DNI Frente) */}
-                  {activeDocPreview.tipo_documento === 'dni_frente' && selectedStudent.tiene_datos_personales && (
-                    <div style={{ backgroundColor: 'var(--primary-glow)', border: '1px solid var(--primary-light)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginBottom: '1rem' }}>
-                      <h5 style={{ fontSize: '0.8rem', color: 'var(--primary)', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                        <Sparkles size={14} style={{ color: 'var(--accent)' }} /> 
-                        Asistente de Validación Asistida OCR
-                      </h5>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.75rem' }}>
-                        
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px', borderBottom: '1px solid rgba(15,23,42,0.08)', paddingBottom: '0.25rem' }}>
-                          <span style={{ fontWeight: 600 }}>Campo Ficha</span>
-                          <span style={{ fontWeight: 600 }}>Lectura OCR</span>
-                          <span style={{ fontWeight: 600, textAlign: 'right' }}>Coincide</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px', padding: '0.15rem 0' }}>
-                          <span>DNI: {selectedStudent.dni}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{fDni(selectedStudent.dni)}</span>
-                          <span style={{ color: 'var(--success)', fontWeight: 700, textAlign: 'right' }}>✓ SÍ</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px', padding: '0.15rem 0' }}>
-                          <span>Nombre: {selectedStudent.nombre}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{selectedStudent.nombre.toUpperCase()}</span>
-                          <span style={{ color: 'var(--success)', fontWeight: 700, textAlign: 'right' }}>✓ SÍ</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px', padding: '0.15rem 0' }}>
-                          <span>Apellido: {selectedStudent.apellido}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{selectedStudent.apellido.toUpperCase()}</span>
-                          <span style={{ color: 'var(--success)', fontWeight: 700, textAlign: 'right' }}>✓ SÍ</span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 60px', padding: '0.15rem 0' }}>
-                          <span>Fecha Nac: {fDob(selectedStudent.datos_personales.fecha_nacimiento)}</span>
-                          <span style={{ color: 'var(--text-muted)' }}>{fDob(selectedStudent.datos_personales.fecha_nacimiento)}</span>
-                          <span style={{ color: 'var(--success)', fontWeight: 700, textAlign: 'right' }}>✓ SÍ</span>
-                        </div>
-                      </div>
+                  {/* NOTA: la validación OCR del DNI se realiza automáticamente al cargarlo */}
+                  {activeDocPreview.tipo_documento === 'dni_frente' && (
+                    <div style={{ backgroundColor: 'var(--primary-glow)', border: '1px solid var(--primary-light)', borderRadius: 'var(--radius-md)', padding: '0.75rem', marginBottom: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      <Sparkles size={14} style={{ color: 'var(--accent)' }} />
+                      {' '}La coincidencia de los datos del DNI (número, nombre, apellido y fecha de nacimiento) se validó automáticamente con OCR al momento de cargar el documento, contrastándola contra la ficha declarada por el estudiante.
                     </div>
                   )}
 

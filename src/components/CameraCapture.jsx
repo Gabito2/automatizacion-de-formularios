@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { Camera, X, RotateCcw, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 /**
@@ -13,6 +13,9 @@ import { Camera, X, RotateCcw, CheckCircle2, AlertCircle, Loader2 } from 'lucide
 export default function CameraCapture({ onCapture, onClose, title = 'Captura de Cámara', hint = '' }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  // Ref espejo del stream: el cleanup del efecto de montaje usa una closure con el
+  // valor inicial (null) y de otro modo las pistas de cámara quedarían activas al desmontar.
+  const streamRef = useRef(null);
 
   const [stream, setStream] = useState(null);
   const [captured, setCaptured] = useState(null);   // dataURL de la captura
@@ -21,16 +24,21 @@ export default function CameraCapture({ onCapture, onClose, title = 'Captura de 
   const [facingMode, setFacingMode] = useState('environment'); // 'environment' = trasera, 'user' = selfie
   const [starting, setStarting] = useState(true);
 
+  const stopTracks = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+  };
+
   // Inicializar cámara
   const startCamera = useCallback(async (facing) => {
     setStarting(true);
     setCameraError('');
 
     // Detener stream anterior si existe
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      setStream(null);
-    }
+    stopTracks();
+    setStream(null);
 
     try {
       const constraints = {
@@ -42,6 +50,7 @@ export default function CameraCapture({ onCapture, onClose, title = 'Captura de 
         audio: false,
       };
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = newStream;
       setStream(newStream);
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
@@ -57,15 +66,14 @@ export default function CameraCapture({ onCapture, onClose, title = 'Captura de 
     } finally {
       setStarting(false);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     startCamera(facingMode);
     // Limpiar al desmontar
-    return () => {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return stopTracks;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- iniciar cámara solo al montar
+  }, []);
 
   // Cambiar cámara (trasera ↔ delantera)
   const toggleCamera = async () => {

@@ -16,7 +16,7 @@ function App() {
     if (savedUser && token) {
       try {
         setUser(JSON.parse(savedUser))
-      } catch (e) {
+      } catch {
         localStorage.removeItem('user')
         localStorage.removeItem('token')
       }

@@ -389,6 +389,14 @@ def register_student(
             detail="El número de DNI ingresado ya se encuentra registrado."
         )
 
+    # Verificar si el email ya está en uso
+    existing_email = db.query(Usuario).filter(Usuario.email == email).first()
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo electrónico ingresado ya se encuentra registrado."
+        )
+
     # 2. Validar que se haya proporcionado al menos un método de carga
     has_compuesto = archivo_compuesto is not None
     has_individual = dni_frente is not None and dni_dorso is not None
@@ -424,24 +432,31 @@ def register_student(
         os.makedirs(temp_dir, exist_ok=True)
         temp_path = os.path.join(temp_dir, f"temp_compuesto_{random.randint(1000, 9999)}{ext}")
 
+        composite_documents = []
+        composite_temp_dirs = []
         try:
             with open(temp_path, "wb") as buffer:
                 shutil.copyfileobj(archivo_compuesto.file, buffer)
 
             # Analizar archivo compuesto
             composite_result = OCRService.analyze_composite_file(temp_path)
+            composite_documents = composite_result.get("documents") or []
+            composite_temp_dirs = composite_result.get("temp_dirs") or []
 
             # Guardar documentos extraídos
-            if composite_result.get("documents"):
+            if composite_documents:
                 from app.utils.file_manager import save_composite_documents
                 saved_paths_compuesto = save_composite_documents(
-                    carrera, dni, composite_result["documents"], archivo_compuesto
+                    carrera, dni, composite_documents, archivo_compuesto
                 )
                 saved_frente = saved_paths_compuesto.get("dni_frente")
                 saved_dorso = saved_paths_compuesto.get("dni_dorso")
                 saved_persona = saved_paths_compuesto.get("foto_4x4")
-            else:
-                # Si no se detectaron documentos, guardar el archivo original como dni_frente
+
+            # Si no se pudo extraer/guardar ningún documento útil,
+            # guardar el archivo original como dni_frente
+            if not saved_frente and not saved_dorso and not saved_persona:
+                archivo_compuesto.file.seek(0)
                 saved_frente = save_document_file(carrera, dni, "dni_frente", archivo_compuesto)
 
         except Exception as e:
@@ -452,6 +467,8 @@ def register_student(
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+            # Liberar archivos temporales de páginas/recortes generados por el análisis
+            OCRService.cleanup_composite_files(composite_documents, composite_temp_dirs)
     else:
         # Modo individual: validar extensiones
         for file_item, label in [(dni_frente, "DNI Frente"), (dni_dorso, "DNI Dorso")]:
@@ -485,11 +502,17 @@ def register_student(
             )
 
     # Obtener rutas físicas absolutas para procesamiento
+    # user_dir se deriva de CUALQUIER archivo guardado (no solo del frente),
+    # para que la limpieza ante errores y la validación facial funcionen
+    # también cuando el compuesto solo aportó dorso o foto.
     absolute_frente = None
     user_dir = None
+    first_saved = saved_frente or saved_dorso or saved_persona
+    if first_saved:
+        absolute_first = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", first_saved))
+        user_dir = os.path.dirname(absolute_first)
     if saved_frente:
         absolute_frente = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_frente))
-        user_dir = os.path.dirname(absolute_frente)
 
     # 4. Validación Facial en la foto personal (solo si se subió)
     face_check = {"has_face": False, "confidence": 0.0, "method_used": "none"}
@@ -661,7 +684,7 @@ def register_student(
     except Exception as ex:
         db.rollback()
         # Limpiar archivos si falló la base de datos
-        if os.path.exists(user_dir):
+        if user_dir and os.path.exists(user_dir):
             shutil.rmtree(user_dir)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -696,14 +719,21 @@ def analizar_archivo_compuesto(
     os.makedirs(temp_dir, exist_ok=True)
     temp_path = os.path.join(temp_dir, f"temp_composite_{random.randint(1000, 9999)}{ext}")
 
+    result = None
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         result = OCRService.analyze_composite_file(temp_path)
 
+        # Exponer al cliente solo metadatos, sin rutas temporales del servidor
+        documents_for_client = [
+            {k: v for k, v in doc.items() if k != "image_path"}
+            for doc in result.get("documents", [])
+        ]
+
         return {
-            "documents": result.get("documents", []),
+            "documents": documents_for_client,
             "dni_data": result.get("dni_data"),
             "confidence": result.get("confidence", 0.0),
             "needs_manual_review": result.get("needs_manual_review", True),
@@ -717,3 +747,5 @@ def analizar_archivo_compuesto(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        if result:
+            OCRService.cleanup_composite_files(result.get("documents", []), result.get("temp_dirs", []))

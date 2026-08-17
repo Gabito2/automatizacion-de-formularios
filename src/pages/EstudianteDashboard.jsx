@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { estudianteAPI } from '../services/api';
+import { useState, useEffect } from 'react';
+import { estudianteAPI, API_URL } from '../services/api';
 import CameraCapture from '../components/CameraCapture';
 import { 
-  User, FileText, UploadCloud, AlertCircle, CheckCircle2, 
+  User, FileText, AlertCircle, CheckCircle2, 
   Clock, LogOut, Calendar, Phone, MapPin, Award, 
   Loader2, RefreshCw, HelpCircle, Eye, GraduationCap, Camera
 } from 'lucide-react';
@@ -126,7 +126,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
         setSecundarioCompleto(resPerfil.secundario_completo || false);
         setTituloSecundario(resPerfil.titulo_secundario || '');
       }
-    } catch (err) {
+    } catch {
       setGeneralError('Error al conectar con el servidor para obtener los datos.');
     } finally {
       setLoading(false);
@@ -163,7 +163,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
       // Recargar para actualizar el estado general
       const resEstado = await estudianteAPI.getEstado();
       setEstadoGeneral(resEstado.estado_general);
-    } catch (err) {
+    } catch {
       setGeneralError('Ocurrió un error al guardar sus datos personales.');
     }
   };
@@ -645,7 +645,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
                                 {esObs && <span style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠ Observado</span>}
                                 
                                 <a 
-                                  href={`http://localhost:8000/${doc.archivo_url}`} 
+                                  href={`${API_URL}/${doc.archivo_url}`} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
                                   className="btn btn-secondary btn-sm"
