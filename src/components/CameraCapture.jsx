@@ -9,8 +9,10 @@ import { Camera, X, RotateCcw, CheckCircle2, AlertCircle, Loader2 } from 'lucide
  *   - onClose(): Callback al cerrar sin capturar
  *   - title (string): Título del modal
  *   - hint (string): Texto de ayuda (ej: "Coloque el frente de su DNI centrado")
+ *   - selfie (bool): Si es una selfie/foto de perfil, abre la cámara frontal
+ *     (facingMode 'user') en lugar de la trasera.
  */
-export default function CameraCapture({ onCapture, onClose, title = 'Captura de Cámara', hint = '' }) {
+export default function CameraCapture({ onCapture, onClose, title = 'Captura de Cámara', hint = '', selfie = false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   // Ref espejo del stream: el cleanup del efecto de montaje usa una closure con el
@@ -21,7 +23,7 @@ export default function CameraCapture({ onCapture, onClose, title = 'Captura de 
   const [captured, setCaptured] = useState(null);   // dataURL de la captura
   const [capturedBlob, setCapturedBlob] = useState(null);
   const [cameraError, setCameraError] = useState('');
-  const [facingMode, setFacingMode] = useState('environment'); // 'environment' = trasera, 'user' = selfie
+  const [facingMode, setFacingMode] = useState(selfie ? 'user' : 'environment'); // 'environment' = trasera, 'user' = selfie
   const [starting, setStarting] = useState(true);
 
   const stopTracks = () => {

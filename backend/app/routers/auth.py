@@ -527,15 +527,9 @@ def register_student(
             persona_ext = ".jpg"
         if persona_ext.lower() in image_exts:
             face_check = FaceService.detect_face(absolute_persona)
-            if not face_check.get("has_face") and user_dir and os.path.exists(user_dir):
-                shutil.rmtree(user_dir)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        "Detección facial fallida: No se encontró un rostro humano visible en la foto de perfil subida. "
-                        "Asegúrese de que su cara esté centrada, bien iluminada y sin obstrucciones."
-                    )
-                )
+            # La foto es OPCIONAL: si no se detecta rostro NO se bloquea el
+            # registro. El documento queda "pendiente" con una observación y
+            # el estudiante puede volver a sacarse la foto desde su panel.
 
     # 5. Validación OCR del DNI Frente (imágenes Y PDFs)
     ocr_results = None
@@ -654,8 +648,16 @@ def register_student(
         # Foto personal (opcional)
         if saved_persona is not None:
             confidence = face_check.get("confidence", 0.0)
-            estado_foto = "aprobado" if confidence >= 0.5 else "pendiente"
-            obs_foto = None if confidence >= 0.5 else f"Detección facial con baja confianza ({confidence:.0%}). Requiere revisión manual."
+            has_face = face_check.get("has_face", False)
+            if has_face and confidence >= 0.5:
+                estado_foto = "aprobado"
+                obs_foto = None
+            elif not has_face:
+                estado_foto = "pendiente"
+                obs_foto = "No se detectó un rostro humano en la foto cargada. Puede sacarse una nueva foto desde su panel de estudiante."
+            else:
+                estado_foto = "pendiente"
+                obs_foto = f"Detección facial con baja confianza ({confidence:.0%}). Puede sacarse una nueva foto desde su panel de estudiante."
 
             doc_persona = Documento(
                 usuario_id=new_user.id,
@@ -674,6 +676,8 @@ def register_student(
             warnings.append("El DNI frontal quedó marcado para revisión manual.")
         if saved_persona is None:
             warnings.append("No se adjuntó foto personal. Podrá subirla más tarde desde su panel.")
+        elif not face_check.get("has_face"):
+            warnings.append("La foto de perfil no pasó la detección facial. Puede volver a sacarla desde su panel de estudiante.")
 
         msg = "Preinscripción realizada con éxito. Ahora puede iniciar sesión con su DNI y contraseña."
         if warnings:

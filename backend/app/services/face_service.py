@@ -4,22 +4,58 @@ import logging
 
 logger = logging.getLogger("FaceService")
 
-# Intentar importar MediaPipe (disponible via pip install mediapipe)
+# Ruta del modelo de MediaPipe Tasks. En versiones recientes (0.10.x) la API
+# legacy `mediapipe.solutions` fue removida y se usa `mediapipe.tasks` con un
+# modelo .tflite descargado.
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+MP_FACE_MODEL = os.getenv(
+    "MP_FACE_MODEL",
+    os.path.join(BASE_DIR, "models", "blaze_face_short_range.tflite"),
+)
+
+# Intentar importar MediaPipe Tasks (API nueva)
 try:
     import mediapipe as mp
-    MEDIAPIPE_AVAILABLE = True
-    logger.info("MediaPipe cargado correctamente como detector facial primario.")
+    from mediapipe.tasks import python as mp_tasks_python
+    from mediapipe.tasks.python import vision as mp_vision
+
+    MEDIAPIPE_AVAILABLE = os.path.exists(MP_FACE_MODEL)
+    if MEDIAPIPE_AVAILABLE:
+        logger.info("MediaPipe Tasks disponible como detector facial primario.")
+    else:
+        logger.warning(
+            f"Modelo de MediaPipe no encontrado en: {MP_FACE_MODEL}. Se usará Haar Cascades como detector facial."
+        )
 except ImportError:
+    mp = None
+    mp_tasks_python = None
+    mp_vision = None
     MEDIAPIPE_AVAILABLE = False
     logger.warning("MediaPipe no disponible. Se usará Haar Cascades como detector facial.")
+
+_mp_face_detector = None
+
+
+def _get_mp_face_detector():
+    """Crea (una sola vez) el detector facial de MediaPipe Tasks."""
+    global _mp_face_detector
+    if _mp_face_detector is None:
+        base_options = mp_tasks_python.BaseOptions(model_asset_path=MP_FACE_MODEL)
+        options = mp_vision.FaceDetectorOptions(
+            base_options=base_options,
+            min_detection_confidence=0.4,
+        )
+        _mp_face_detector = mp_vision.FaceDetector.create_from_options(options)
+        logger.info("MediaPipe FaceDetector listo.")
+    return _mp_face_detector
 
 
 class FaceService:
     @staticmethod
     def detect_face(image_path: str) -> dict:
         """
-        Detecta rostros en una imagen usando MediaPipe como detector primario
-        y Haar Cascades de OpenCV como fallback.
+        Detecta rostros en una imagen usando MediaPipe Tasks (API nueva) como
+        detector primario y Haar Cascades de OpenCV como fallback.
 
         Retorna un diccionario con:
         - has_face (bool): Si se detectó al menos un rostro
@@ -40,38 +76,33 @@ class FaceService:
                     "error": "No se pudo leer el archivo de imagen."
                 }
 
-            # ── DETECTOR PRIMARIO: MediaPipe Face Detection ──────────────────
+            # ── DETECTOR PRIMARIO: MediaPipe Tasks ───────────────────────────
             if MEDIAPIPE_AVAILABLE:
                 try:
-                    mp_face = mp.solutions.face_detection
-                    with mp_face.FaceDetection(
-                        model_selection=1,       # 1 = modelo para rango completo (hasta ~5m)
-                        min_detection_confidence=0.4
-                    ) as detector:
-                        # MediaPipe requiere RGB
-                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        results = detector.process(img_rgb)
+                    detector = _get_mp_face_detector()
+                    # MediaPipe requiere RGB
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+                    results = detector.detect(mp_image)
 
-                        if results.detections:
-                            face_count = len(results.detections)
-                            # Tomar el score de confianza del mejor detection
-                            best_confidence = max(
-                                d.score[0] for d in results.detections
-                            )
-                            logger.info(
-                                f"[MediaPipe] Rostros detectados: {face_count}, "
-                                f"confianza máx: {best_confidence:.2f}"
-                            )
-                            return {
-                                "has_face": True,
-                                "face_count": face_count,
-                                "confidence": float(best_confidence),
-                                "method_used": "mediapipe",
-                                "error": None
-                            }
-                        else:
-                            logger.info("[MediaPipe] No se detectaron rostros.")
-                            # MediaPipe no detectó → intentar con Haar como confirmación
+                    if results.detections:
+                        face_count = len(results.detections)
+                        best_confidence = max(
+                            d.categories[0].score for d in results.detections
+                        )
+                        logger.info(
+                            f"[MediaPipe] Rostros detectados: {face_count}, "
+                            f"confianza máx: {best_confidence:.2f}"
+                        )
+                        return {
+                            "has_face": True,
+                            "face_count": face_count,
+                            "confidence": float(best_confidence),
+                            "method_used": "mediapipe",
+                            "error": None
+                        }
+                    logger.info("[MediaPipe] No se detectaron rostros.")
+                    # MediaPipe no detectó → intentar con Haar como confirmación
                 except Exception as mp_err:
                     logger.warning(f"[MediaPipe] Error durante detección: {mp_err}. Usando Haar Cascades.")
 

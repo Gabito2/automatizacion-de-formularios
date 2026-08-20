@@ -12,18 +12,16 @@ try:
 except ImportError:
     PDF_AVAILABLE = False
 
-try:
-    import mediapipe as mp
-    MEDIAPIPE_AVAILABLE = True
-except ImportError:
-    MEDIAPIPE_AVAILABLE = False
-
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OCRService")
 
-# Umbral de confianza mínima para aceptar texto de cada motor
-MIN_CONFIDENCE = 0.75
+from app.services.face_service import FaceService
+
+# Umbral de confianza mínima para aceptar texto de cada motor.
+# 0.75 descartaba bloques legítimos del DNI (ej: el número "44,430.913" leído
+# con confianza 0.63), lo que hacía fallar la validación de documentos válidos.
+MIN_CONFIDENCE = 0.5
 
 # ── MOTOR PRIMARIO: PaddleOCR ──────────────────────────────────────────────────
 try:
@@ -139,17 +137,138 @@ def _fix_digits_in_number(raw: str) -> str:
     return ''.join(result)
 
 
+def _levenshtein(a: str, b: str) -> int:
+    """Distancia de edición entre dos cadenas (para matcheo tolerante del OCR)."""
+    if a == b:
+        return 0
+    if len(a) == 0:
+        return len(b)
+    if len(b) == 0:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a):
+        cur = [i + 1]
+        for j, cb in enumerate(b):
+            cur.append(min(prev[j + 1] + 1, cur[j] + 1, prev[j] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _token_fuzzy_in(word: str, tokens, max_dist: int = 1) -> bool:
+    """
+    True si `word` aparece exacto entre `tokens` o si algún token está a
+    distancia de edición <= max_dist (escala con el largo de la palabra).
+    Compara todo en minúsculas para evitar falsos negativos por mayúsculas.
+    """
+    if not word:
+        return False
+    low = word.lower()
+    lowered_tokens = [t.lower() for t in tokens]
+    if low in lowered_tokens:
+        return True
+    for tok in lowered_tokens:
+        allowed = 1 if len(word) < 8 else 2
+        if allowed > max_dist:
+            allowed = max_dist
+        if abs(len(low) - len(tok)) <= allowed + 1 and _levenshtein(low, tok) <= allowed:
+            return True
+    return False
+
+
+def _keyword_in_text(text: str, keyword: str) -> bool:
+    """
+    Determina si una keyword aparece en el texto, tolerando errores típicos del
+    OCR (ej: "Nac onaldad" ~ "NACIONALIDAD", "Documenio" ~ "DOCUMENTO").
+    Para keywords multi-palabra alcanza con que alguna de sus palabras
+    significativas (>=4 letras) aparezca con exactitud o por fuzzy match.
+    """
+    kw = keyword.upper()
+    if kw in text:
+        return True
+    significant = [w for w in kw.split() if len(w) >= 4]
+    if not significant:
+        return False
+    tokens = [t for t in re.split(r'\W+', text) if t]
+    return any(_token_fuzzy_in(w, tokens, max_dist=2) for w in significant)
+
+
+# Abreviaturas de meses (ES + EN) para fechas tipo "25 NOV 2002"
+MONTH_ABBREV = {
+    "ENE": "01", "FEB": "02", "MAR": "03", "ABR": "04", "MAY": "05", "JUN": "06",
+    "JUL": "07", "AGO": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DIC": "12",
+    "JAN": "01", "APR": "04", "AUG": "08", "DEC": "12",
+}
+
+
+def _extract_birth_date(extracted_text: str) -> str:
+    """
+    Extrae la fecha de nacimiento en formato 'YYYY-MM-DD' desde texto OCR.
+
+    Soporta fechas con el mes en palabras (el frente del DNI las imprime así):
+      - "25 NOV 2002"
+      - "25 NOV/NOV 2002" (duplicación típica de lectura OCR)
+      - "25-NOV-2002" / "NOV 25 2002"
+    Prioriza la fecha más cercana a la keyword "NACIMIENTO"/"BIRTH" para evitar
+    tomar la fecha de emisión/vencimiento en su lugar.
+    """
+    if not extracted_text:
+        return ""
+    up = extracted_text.upper()
+
+    # Posición de la keyword de nacimiento (si existe)
+    kw_positions = []
+    for kw in ("NACIMIENTO", "BIRTH"):
+        idx = up.find(kw)
+        if idx != -1:
+            kw_positions.append(idx)
+    target = min(kw_positions) if kw_positions else None
+
+    names = "|".join(MONTH_ABBREV.keys())
+    matches = []
+
+    # Día primero: "25 NOV 2002"
+    pattern = re.compile(
+        rf'\b(\d{{1,2}})[\s./-]+({names})[A-Z]*[\s./-]*(?:{names})?[\s./-]*(\d{{4}})\b'
+    )
+    for m in pattern.finditer(up):
+        day, mon, year = m.group(1), m.group(2), m.group(3)
+        date = f"{year}-{MONTH_ABBREV[mon]}-{int(day):02d}"
+        dist = abs(m.start() - target) if target is not None else float("inf")
+        matches.append((dist, date))
+
+    # Mes primero: "NOV 25 2002"
+    pattern2 = re.compile(
+        rf'\b({names})[A-Z]*[\s./-]+(\d{{1,2}})[\s./-]+(\d{{4}})\b'
+    )
+    for m in pattern2.finditer(up):
+        mon, day, year = m.group(1), m.group(2), m.group(3)
+        date = f"{year}-{MONTH_ABBREV[mon]}-{int(day):02d}"
+        dist = abs(m.start() - target) if target is not None else float("inf")
+        matches.append((dist, date))
+
+    if not matches:
+        return ""
+    return min(matches, key=lambda x: x[0])[1]
+
+
 def _apply_digit_correction_to_text(text: str) -> str:
     """
     Aplica corrección de caracteres similares a dígitos solo en tokens
-    que ya contienen al menos un dígito real (evita modificar texto alfabético).
+    predominantemente numéricos (evita modificar texto alfabético y tokens
+    mixtos como "GARCIA123", donde un dígito colado corrompería el nombre).
     """
     if not text:
         return text
 
     def fix_token(token: str) -> str:
-        has_digit = any(c.isdigit() for c in token)
-        if not has_digit:
+        alnum = [c for c in token if c.isalnum()]
+        digits = [c for c in alnum if c.isdigit()]
+        if not digits:
+            return token
+        # Solo corregir tokens mayoritariamente numéricos (>=60%).
+        # Con 50% tokens como "20FEB/FEB2038" (fecha de vencimiento) se
+        # convertían en números fantasma ("20882038") por el mapeo B->8.
+        if len(digits) / len(alnum) < 0.6:
             return token
         return _fix_digits_in_number(token)
 
@@ -247,8 +366,12 @@ class OCRService:
     @staticmethod
     def _is_dni_document(text: str) -> bool:
         """
-        Verifica si el texto extraído corresponde a un DNI argentino
-        buscando keywords características del documento.
+        Verifica si el texto extraído corresponde a un DNI argentino.
+
+        Usa matcheo tolerante (fuzzy) de keywords porque el OCR suele deformar
+        las etiquetas ("Nac onaldad", "Documenio", "Nombne"...). Como fallback,
+        también acepta el frente si aparece "ARGENTINA" junto a un número de
+        7-8 dígitos (patrón típico de un DNI).
         """
         if not text or not text.strip():
             return False
@@ -260,9 +383,20 @@ class OCRService:
             return t
 
         norm_text = normalize(text)
-        found = sum(1 for kw in DNI_KEYWORDS if kw in norm_text)
+        found = sum(1 for kw in DNI_KEYWORDS if _keyword_in_text(norm_text, kw))
         logger.info(f"[DNI-Check] Keywords encontradas: {found}/{len(DNI_KEYWORDS)} (mínimo: {DNI_MIN_KEYWORDS})")
-        return found >= DNI_MIN_KEYWORDS
+
+        if found >= DNI_MIN_KEYWORDS:
+            return True
+
+        # Fallback: "ARGENTINA" + número de 7-8 dígitos → frente de DNI
+        if _keyword_in_text(norm_text, "ARGENTINA"):
+            has_number = re.search(r'(?<!\d)\d{7,8}(?!\d)', norm_text.replace(" ", "")) is not None
+            if has_number:
+                logger.info("[DNI-Check] Fallback ARGENTINA + número de 7-8 dígitos aceptado.")
+                return True
+
+        return False
 
     # ─────────────────────────────────────────────────────────────────────────
     # Extracción por motor individual
@@ -364,41 +498,39 @@ class OCRService:
 
     @staticmethod
     def _run_all_engines(image_path: str, processed_img) -> list[dict]:
-        """Ejecuta todos los motores disponibles y retorna sus resultados."""
+        """
+        Ejecuta todos los motores disponibles y retorna sus resultados.
+
+        PaddleOCR y EasyOCR reciben la imagen ORIGINAL: el preprocesado
+        (CLAHE/sharpening/deskew) degrada su rendimiento y hacía perder el
+        número de DNI y las keywords. Tesseract sí recibe la imagen
+        preprocesada, donde ese pipeline le beneficia.
+        """
         results = []
 
-        # Guardar imagen preprocesada a disco temporal para que todos los motores la usen
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
-        try:
-            os.close(tmp_fd)
-            cv2.imwrite(tmp_path, processed_img)
+        if PADDLEOCR_AVAILABLE:
+            try:
+                text, conf = OCRService._extract_with_paddleocr(image_path)
+                if text.strip():
+                    results.append({"engine": "paddleocr", "text": text, "confidence": conf})
+            except Exception as e:
+                logger.warning(f"[Voting] PaddleOCR falló: {e}")
 
-            if PADDLEOCR_AVAILABLE:
-                try:
-                    text, conf = OCRService._extract_with_paddleocr(tmp_path)
-                    if text.strip():
-                        results.append({"engine": "paddleocr", "text": text, "confidence": conf})
-                except Exception as e:
-                    logger.warning(f"[Voting] PaddleOCR falló: {e}")
+        if EASYOCR_AVAILABLE:
+            try:
+                text, conf = OCRService._extract_with_easyocr(image_path)
+                if text.strip():
+                    results.append({"engine": "easyocr", "text": text, "confidence": conf})
+            except Exception as e:
+                logger.warning(f"[Voting] EasyOCR falló: {e}")
 
-            if EASYOCR_AVAILABLE:
-                try:
-                    text, conf = OCRService._extract_with_easyocr(tmp_path)
-                    if text.strip():
-                        results.append({"engine": "easyocr", "text": text, "confidence": conf})
-                except Exception as e:
-                    logger.warning(f"[Voting] EasyOCR falló: {e}")
-
-            if TESSERACT_AVAILABLE:
-                try:
-                    text, conf = OCRService._extract_with_tesseract(processed_img, for_digits=False)
-                    if text.strip():
-                        results.append({"engine": "tesseract", "text": text, "confidence": conf})
-                except Exception as e:
-                    logger.warning(f"[Voting] Tesseract falló: {e}")
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        if TESSERACT_AVAILABLE:
+            try:
+                text, conf = OCRService._extract_with_tesseract(processed_img, for_digits=False)
+                if text.strip():
+                    results.append({"engine": "tesseract", "text": text, "confidence": conf})
+            except Exception as e:
+                logger.warning(f"[Voting] Tesseract falló: {e}")
 
         return results
 
@@ -676,6 +808,7 @@ class OCRService:
             return re.sub(r'[^A-Z0-9\s]', '', text)
 
         norm_ocr = normalize(extracted_text)
+        ocr_tokens = [t for t in norm_ocr.split() if t]
 
         # 0. ¿Es un DNI argentino?
         is_dni_doc = OCRService._is_dni_document(extracted_text)
@@ -696,7 +829,7 @@ class OCRService:
             words = [w for w in norm_name.split() if len(w) > 2]
             if words:
                 name_words_checked = words
-                name_match = all(word in norm_ocr for word in words)
+                name_match = all(_token_fuzzy_in(word, ocr_tokens) for word in words)
             else:
                 name_match = norm_name in norm_ocr
 
@@ -709,7 +842,7 @@ class OCRService:
             words = [w for w in norm_lastname.split() if len(w) > 2]
             if words:
                 lastname_words_checked = words
-                lastname_match = all(word in norm_ocr for word in words)
+                lastname_match = all(_token_fuzzy_in(word, ocr_tokens) for word in words)
             else:
                 lastname_match = norm_lastname in norm_ocr
 
@@ -730,6 +863,11 @@ class OCRService:
                         dob_4y_sl = f"{day.zfill(2)}{month.zfill(2)}{year}"
                         if dob_4y_sl in ocr_no_spaces:
                             dob_match = True
+                # Fecha con mes en palabras ("25 NOV 2002" → "2002-11-25")
+                if not dob_match:
+                    parsed_ocr_dob = _extract_birth_date(extracted_text)
+                    if parsed_ocr_dob and parsed_ocr_dob == declared_dob:
+                        dob_match = True
             except Exception:
                 pass
 
@@ -783,19 +921,22 @@ class OCRService:
         corrected_text = _apply_digit_correction_to_text(extracted_text)
         lines = [line.strip() for line in corrected_text.split('\n') if line.strip()]
 
-        # 1. DNI: 8 dígitos exactos primero, luego 7
+        # 1. DNI: el frente argentino imprime el número con separadores
+        # (ej: "44.430.913"), así que ese patrón tiene prioridad. Debe
+        # evaluarse sobre el texto CRUDO porque la corrección de dígitos
+        # ya elimina los separadores.
         dni = ""
-        m8 = re.search(r'(?<!\d)(\d{8})(?!\d)', corrected_text)
-        if m8:
-            dni = m8.group(1)
-        else:
-            m7 = re.search(r'(?<!\d)(\d{7})(?!\d)', corrected_text)
-            if m7:
-                dni = m7.group(1)
+        mfmt = re.search(r'\b(\d{1,2})[.,\s](\d{3})[.,\s](\d{3})\b', extracted_text)
+        if mfmt:
+            dni = mfmt.group(1) + mfmt.group(2) + mfmt.group(3)
         if not dni:
-            mfmt = re.search(r'\b(\d{1,2})[.\s](\d{3})[.\s](\d{3})\b', corrected_text)
-            if mfmt:
-                dni = mfmt.group(1) + mfmt.group(2) + mfmt.group(3)
+            m8 = re.search(r'(?<!\d)(\d{8})(?!\d)', corrected_text)
+            if m8:
+                dni = m8.group(1)
+            else:
+                m7 = re.search(r'(?<!\d)(\d{7})(?!\d)', corrected_text)
+                if m7:
+                    dni = m7.group(1)
 
         # 2. Apellido y Nombre — búsqueda robusta
         apellido, nombre = "", ""
@@ -839,6 +980,15 @@ class OCRService:
                 elif result:
                     nombre = result
 
+        # Fallback: si el OCR no detectó los labels "APELLIDO"/"NOMBRE"
+        # (común con fotos reales), asumir el orden típico del frente del DNI:
+        # primera línea alfabética = apellido, segunda = nombre.
+        if not apellido and not nombre and len(lines) >= 2:
+            alpha_lines = [ln for ln in lines if re.fullmatch(r'[A-Za-zÁÉÍÓÚÜÑ\s]+', ln)]
+            if len(alpha_lines) >= 2:
+                apellido = alpha_lines[0]
+                nombre = alpha_lines[1]
+
         def clean_field(text: str) -> str:
             if not text:
                 return ""
@@ -850,22 +1000,25 @@ class OCRService:
         apellido = clean_field(apellido)
         nombre = clean_field(nombre)
 
-        # 3. Fecha de nacimiento — soporta DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, DD/MM/YY
+        # 3. Fecha de nacimiento — soporta DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY,
+        # DD/MM/YY y meses en palabras ("25 NOV 2002", "25 NOV/NOV 2002")
         fecha_nacimiento = ""
-        # Formato con separadores: / . o -
-        dm = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{4})\b', corrected_text)
-        if dm:
-            day, month, year = dm.groups()
-            fecha_nacimiento = f"{year}-{month}-{day}"
-        else:
-            dm2 = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{2})\b', corrected_text)
-            if dm2:
-                day, month, y2 = dm2.groups()
-                y2_int = int(y2)
-                # DNIs argentinos: personas en edad universitaria (~17-70 años)
-                # 00-30 → 2000s, 31-99 → 1900s
-                year = f"20{y2}" if y2_int <= 30 else f"19{y2}"
+        fecha_nacimiento = _extract_birth_date(extracted_text)
+        if not fecha_nacimiento:
+            # Formato con separadores: / . o -
+            dm = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{4})\b', corrected_text)
+            if dm:
+                day, month, year = dm.groups()
                 fecha_nacimiento = f"{year}-{month}-{day}"
+            else:
+                dm2 = re.search(r'\b(\d{2})[/\-.](\d{2})[/\-.](\d{2})\b', corrected_text)
+                if dm2:
+                    day, month, y2 = dm2.groups()
+                    y2_int = int(y2)
+                    # DNIs argentinos: personas en edad universitaria (~17-70 años)
+                    # 00-30 → 2000s, 31-99 → 1900s
+                    year = f"20{y2}" if y2_int <= 30 else f"19{y2}"
+                    fecha_nacimiento = f"{year}-{month}-{day}"
 
         return {
             "dni": dni,
@@ -906,18 +1059,15 @@ class OCRService:
             mean_hue = np.mean(hsv[:, :, 0])
             mean_saturation = np.mean(hsv[:, :, 1])
 
-            # 1. Verificar si es DNI frontal (keywords en OCR rápido)
+            # 1. Verificar si es DNI frontal (keywords en OCR con todos los motores)
             is_dni_front = False
             dni_confidence = 0.0
-            if PADDLEOCR_AVAILABLE:
+            if PADDLEOCR_AVAILABLE or EASYOCR_AVAILABLE or TESSERACT_AVAILABLE:
                 try:
-                    temp_text, temp_conf = OCRService._extract_with_paddleocr(image_path)
-                    if temp_text:
-                        dni_keywords_found = sum(1 for kw in ["APELLIDO", "NOMBRE", "NACIMIENTO", "DNI", "REPUBLICA"] 
-                                                 if kw in temp_text.upper())
-                        if dni_keywords_found >= 2:
-                            is_dni_front = True
-                            dni_confidence = min(0.95, 0.6 + (dni_keywords_found * 0.1))
+                    temp_text, _ = OCRService._extract_from_single_image(image_path)
+                    if temp_text and OCRService._is_dni_document(temp_text):
+                        is_dni_front = True
+                        dni_confidence = 0.8
                 except Exception:
                     pass
 
@@ -940,27 +1090,12 @@ class OCRService:
 
             # 3. Verificar si es foto de perfil (rostro detectado + relación de aspecto)
             has_face = False
-            if MEDIAPIPE_AVAILABLE:
-                try:
-                    mp_face = mp.solutions.face_detection
-                    with mp_face.FaceDetection(model_selection=1, min_detection_confidence=0.4) as detector:
-                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        results = detector.process(img_rgb)
-                        if results.detections and len(results.detections) == 1:
-                            has_face = True
-                except Exception:
-                    pass
-
-            if not has_face and MEDIAPIPE_AVAILABLE:
-                try:
-                    face_cascade = cv2.CascadeClassifier(
-                        os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-                    )
-                    faces = face_cascade.detectMultiScale(gray, 1.1, 3, minSize=(40, 40))
-                    if len(faces) == 1:
-                        has_face = True
-                except Exception:
-                    pass
+            try:
+                face_result = FaceService.detect_face(image_path)
+                if face_result.get("has_face") and face_result.get("face_count", 0) == 1:
+                    has_face = True
+            except Exception:
+                pass
 
             aspect_ratio = w / h if h > 0 else 0
             is_photo_aspect = 0.6 < aspect_ratio < 0.9 or 1.1 < aspect_ratio < 1.5

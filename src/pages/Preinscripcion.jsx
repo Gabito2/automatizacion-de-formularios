@@ -339,10 +339,11 @@ export default function Preinscripcion({ onBackToLogin }) {
       }
     }
 
-    // Bloquear envío si la validación de foto detectó explícitamente que no hay rostro
+    // La foto de perfil es OPCIONAL: si no pasó la detección facial no se
+    // bloquea el envío; el sistema la guarda para revisión manual y el
+    // estudiante puede volver a sacarse una foto luego desde su panel.
     if (fotoPersona && resultadoFoto && resultadoFoto.has_face === false) {
-      setError('La foto personal no pasó la validación: no se detectó un rostro humano. Por favor cambie la foto o quite la foto y suba la demás documentación.');
-      return;
+      setSuccess('Advertencia: no se detectó un rostro en la foto de perfil. La podrá volver a sacar luego desde su panel de estudiante.');
     }
 
     setLoading(true);
@@ -1102,6 +1103,7 @@ export default function Preinscripcion({ onBackToLogin }) {
           }
           onCapture={(blob, dataUrl) => handleCamaraCapture(blob, dataUrl, camaraAbierta)}
           onClose={() => setCamaraAbierta(null)}
+          selfie={camaraAbierta === 'foto_persona'}
         />
       )}
     </div>

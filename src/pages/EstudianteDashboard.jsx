@@ -764,6 +764,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
           }
           onCapture={(blob, dataUrl) => handleCamaraUpload(blob, dataUrl, camaraDocumento)}
           onClose={() => setCamaraDocumento(null)}
+          selfie={camaraDocumento === 'foto_4x4'}
         />
       )}
     </div>
