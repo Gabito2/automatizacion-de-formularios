@@ -162,8 +162,8 @@ def analizar_dni(
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # Extraer texto de la imagen
-        extracted_text, quality_report = OCRService.extract_text(temp_path)
+        # Extraer texto de la imagen (modo rápido para DNI)
+        extracted_text, quality_report = OCRService.extract_text_fast(temp_path)
         
         # Parsear los campos estructurados
         extracted_fields = OCRService.parse_dni_text(extracted_text)
@@ -223,7 +223,7 @@ def analizar_dni_camara(
         with open(temp_path, "wb") as f:
             f.write(image_bytes)
 
-        extracted_text, quality_report = OCRService.extract_text(temp_path)
+        extracted_text, quality_report = OCRService.extract_text_fast(temp_path)
         extracted_fields = OCRService.parse_dni_text(extracted_text)
 
         return {
@@ -558,7 +558,7 @@ def register_student(
             "fecha_nacimiento": fecha_nacimiento
         }
         try:
-            extracted_text, quality_report = OCRService.extract_text(ocr_file_path, user_info)
+            extracted_text, quality_report = OCRService.extract_text_fast(ocr_file_path)
             ocr_results = OCRService.validate_dni_data(extracted_text, user_info)
 
             if quality_report and (quality_report.get("is_blurry") or quality_report.get("is_too_dark") or quality_report.get("is_too_bright")):

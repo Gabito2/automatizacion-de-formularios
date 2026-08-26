@@ -286,7 +286,7 @@ def upload_document(
         }
         
         try:
-            extracted_text, quality_report = OCRService.extract_text(absolute_path, user_info)
+            extracted_text, quality_report = OCRService.extract_text_fast(absolute_path)
 
             # Validar coincidencia de datos
             ocr_results = OCRService.validate_dni_data(extracted_text, user_info)

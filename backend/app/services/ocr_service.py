@@ -289,12 +289,10 @@ class OCRService:
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def preprocess_image(image_path: str):
+    def preprocess_image(image_path: str, fast: bool = False):
         """
-        Preprocesamiento de imagen con OpenCV:
-        - Escala a mínimo 1500px de ancho
-        - Corrección leve de inclinación (deskew)
-        - Filtro bilateral + CLAHE + Sharpening leve
+        Preprocesamiento de imagen con OpenCV.
+        Si fast=True (modo rápido para DNI), omite deskew y usa filtros más ligeros.
         Retorna (imagen_procesada, quality_report).
         """
         img = cv2.imread(image_path)
@@ -303,61 +301,70 @@ class OCRService:
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Métricas de calidad
+        # Métricas de calidad (rápidas, sin Canny extra)
         laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
         is_blurry = laplacian_var < 80.0
         mean_brightness = np.mean(gray)
         is_too_dark = mean_brightness < 45.0
         is_too_bright = mean_brightness > 235.0
-        edges_q = cv2.Canny(gray, 50, 150)
-        edge_density = np.sum(edges_q > 0) / (gray.shape[0] * gray.shape[1])
-        is_incomplete = edge_density < 0.01
+        is_incomplete = False  # Se evalúa solo en modo completo
 
-        # Escalar a mínimo 1500px de ancho
+        if not fast:
+            edges_q = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges_q > 0) / (gray.shape[0] * gray.shape[1])
+            is_incomplete = edge_density < 0.01
+
+        # Escalar a mínimo 1200px de ancho (antes 1500)
         height, width = gray.shape
-        TARGET_WIDTH = 1500
+        TARGET_WIDTH = 1200
         if width < TARGET_WIDTH:
             sf = TARGET_WIDTH / width
-            gray = cv2.resize(gray, (int(width * sf), int(height * sf)), interpolation=cv2.INTER_LANCZOS4)
+            interp = cv2.INTER_LINEAR if fast else cv2.INTER_LANCZOS4
+            gray = cv2.resize(gray, (int(width * sf), int(height * sf)), interpolation=interp)
 
-        # Deskew leve
-        try:
-            e = cv2.Canny(gray, 50, 150, apertureSize=3)
-            lines = cv2.HoughLines(e, 1, np.pi / 180, threshold=100)
-            if lines is not None:
-                angles = []
-                for line in lines[:20]:
-                    rho, theta = line[0]
-                    angle = (theta * 180 / np.pi) - 90
-                    if abs(angle) < 10:
-                        angles.append(angle)
-                if angles:
-                    median_angle = np.median(angles)
-                    if abs(median_angle) > 0.5:
-                        h, w = gray.shape
-                        M = cv2.getRotationMatrix2D((w // 2, h // 2), median_angle, 1.0)
-                        gray = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-        except Exception:
-            pass
+        if not fast:
+            # Deskew leve (solo en modo completo)
+            try:
+                e = cv2.Canny(gray, 50, 150, apertureSize=3)
+                lines = cv2.HoughLines(e, 1, np.pi / 180, threshold=100)
+                if lines is not None:
+                    angles = []
+                    for line in lines[:20]:
+                        rho, theta = line[0]
+                        angle = (theta * 180 / np.pi) - 90
+                        if abs(angle) < 10:
+                            angles.append(angle)
+                    if angles:
+                        median_angle = np.median(angles)
+                        if abs(median_angle) > 0.5:
+                            h, w = gray.shape
+                            M = cv2.getRotationMatrix2D((w // 2, h // 2), median_angle, 1.0)
+                            gray = cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+            except Exception:
+                pass
 
         # Filtro bilateral → CLAHE → Sharpening leve
-        filtered = cv2.bilateralFilter(gray, 9, 75, 75)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(filtered)
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        sharpened = cv2.filter2D(enhanced, -1, kernel)
+        if fast:
+            # Modo rápido: solo CLAHE (salta bilateral y sharpening)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+        else:
+            filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(filtered)
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            enhanced = cv2.filter2D(enhanced, -1, kernel)
 
         quality_report = {
             "blur_score": float(laplacian_var),
             "brightness_score": float(mean_brightness),
-            "edge_density": float(edge_density),
             "is_blurry": bool(is_blurry),
             "is_too_dark": bool(is_too_dark),
             "is_too_bright": bool(is_too_bright),
             "is_incomplete": bool(is_incomplete),
             "legible": not (is_blurry or is_too_dark or is_too_bright),
         }
-        return sharpened, quality_report
+        return enhanced, quality_report
 
     # ─────────────────────────────────────────────────────────────────────────
     # Detección de documento DNI argentino
@@ -601,7 +608,7 @@ class OCRService:
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _pdf_to_images(pdf_path: str, dpi: int = 300) -> list[str]:
+    def _pdf_to_images(pdf_path: str, dpi: int = 200) -> list[str]:
         """
         Convierte cada página de un PDF a una imagen PNG temporal.
         Retorna una lista de rutas a las imágenes generadas.
@@ -668,6 +675,64 @@ class OCRService:
         quality_report["confidence_avg"] = round(confidence_avg, 3)
 
         return extracted_text, quality_report
+
+    @staticmethod
+    def extract_text_fast(file_path: str) -> tuple[str, dict]:
+        """
+        Extracción RÁPIDA de texto para DNI.
+        - Usa solo PaddleOCR (el más rápido y preciso para DNIs argentinos)
+        - Preprocesamiento ligero (sin deskew, sin bilateral filter)
+        - Sin voting entre motores
+        Retorna (extracted_text, quality_report).
+        """
+        try:
+            _, ext = os.path.splitext(file_path)
+            ext = ext.lower()
+
+            if ext == ".pdf":
+                # Para PDFs rápidos, renderizar solo la primera página a 200 DPI
+                if not PDF_AVAILABLE:
+                    return "", {"legible": False, "ocr_engine": "none"}
+                page_images = OCRService._pdf_to_images(file_path, dpi=200)
+                if not page_images:
+                    return "", {"legible": False, "ocr_engine": "none"}
+                try:
+                    text, qreport = OCRService._extract_from_single_image_fast(page_images[0])
+                    qreport["pages_processed"] = len(page_images)
+                    return text, qreport
+                finally:
+                    OCRService._cleanup_temp_images(page_images)
+
+            return OCRService._extract_from_single_image_fast(file_path)
+
+        except Exception as e:
+            logger.error(f"Error en OCR rápido: {str(e)}")
+            return "", {"legible": False, "ocr_engine": "none", "error": str(e)}
+
+    @staticmethod
+    def _extract_from_single_image_fast(image_path: str) -> tuple[str, dict]:
+        """
+        Extrae texto de una imagen usando solo PaddleOCR con preprocesamiento ligero.
+        """
+        processed_img, quality_report = OCRService.preprocess_image(image_path, fast=True)
+
+        if not PADDLEOCR_AVAILABLE:
+            logger.warning("PaddleOCR no disponible para extracción rápida.")
+            quality_report["ocr_engine"] = "none"
+            return "", quality_report
+
+        try:
+            text, conf = OCRService._extract_with_paddleocr(image_path)
+            if text.strip():
+                quality_report["ocr_engine"] = "paddleocr"
+                quality_report["confidence_avg"] = round(conf, 3)
+                return text, quality_report
+        except Exception as e:
+            logger.warning(f"[Fast OCR] PaddleOCR falló: {e}")
+
+        # Fallback: intentar con el método completo (voting)
+        logger.info("[Fast OCR] Fallback a método completo con voting")
+        return OCRService._extract_from_single_image(image_path)
 
     @staticmethod
     def extract_text(file_path: str, user_info: dict = None) -> tuple[str, dict]:
