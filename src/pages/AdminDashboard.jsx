@@ -38,6 +38,7 @@ export default function AdminDashboard({ user, onLogout }) {
   const [obsDestino, setObsDestino] = useState('todos'); // 'todos' | 'deudores' | 'especifico'
   const [obsMensaje, setObsMensaje] = useState('');
   const [obsUsuarioId, setObsUsuarioId] = useState('');
+  const [obsBusqueda, setObsBusqueda] = useState('');
   const [obsLoading, setObsLoading] = useState(false);
   const [obsResult, setObsResult] = useState(null);
 
@@ -229,6 +230,7 @@ export default function AdminDashboard({ user, onLogout }) {
       setObsResult(res);
       setObsMensaje('');
       setObsUsuarioId('');
+      setObsBusqueda('');
     } catch (err) {
       setError(err.response?.data?.detail || 'Error al enviar la observación.');
     } finally {
@@ -357,7 +359,7 @@ export default function AdminDashboard({ user, onLogout }) {
             </button>
             <button 
               className="btn btn-primary"
-              onClick={() => { setShowObsModal(true); setObsResult(null); setObsMensaje(''); setObsDestino('todos'); setObsUsuarioId(''); }}
+              onClick={() => { setShowObsModal(true); setObsResult(null); setObsMensaje(''); setObsDestino('todos'); setObsUsuarioId(''); setObsBusqueda(''); }}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--accent)', borderColor: 'var(--accent)' }}
             >
               <MessageSquare size={18} />
@@ -800,23 +802,80 @@ export default function AdminDashboard({ user, onLogout }) {
               </div>
             </div>
 
-            {/* Selector de estudiante específico */}
+            {/* Selector de estudiante específico con buscador */}
             {obsDestino === 'especifico' && (
               <div className="form-group animate-fade-in" style={{ marginTop: '1rem' }}>
-                <label className="form-label" htmlFor="obs-estudiante">Seleccionar Estudiante *</label>
-                <select
-                  id="obs-estudiante"
-                  className="form-control form-select"
-                  value={obsUsuarioId}
-                  onChange={(e) => setObsUsuarioId(e.target.value)}
-                >
-                  <option value="">-- Seleccione un estudiante --</option>
-                  {legajos.map(l => (
-                    <option key={l.usuario_id} value={l.usuario_id}>
-                      {l.apellido}, {l.nombre} (DNI: {l.dni})
-                    </option>
-                  ))}
-                </select>
+                <label className="form-label" htmlFor="obs-estudiante">Buscar Estudiante por nombre o DNI *</label>
+                <div style={{ position: 'relative' }}>
+                  <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                  <input
+                    id="obs-estudiante"
+                    type="text"
+                    className="form-control"
+                    style={{ paddingLeft: '2.5rem' }}
+                    placeholder="Escribí el nombre, apellido o DNI del alumno..."
+                    value={obsBusqueda}
+                    onChange={(e) => {
+                      setObsBusqueda(e.target.value);
+                      setObsUsuarioId('');
+                    }}
+                  />
+                </div>
+                {obsBusqueda.trim() && (
+                  <div style={{
+                    maxHeight: '180px',
+                    overflowY: 'auto',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    marginTop: '0.5rem',
+                    backgroundColor: 'white'
+                  }}>
+                    {legajos
+                      .filter(l => {
+                        const term = obsBusqueda.toLowerCase();
+                        return (
+                          l.nombre.toLowerCase().includes(term) ||
+                          l.apellido.toLowerCase().includes(term) ||
+                          l.dni.includes(term)
+                        );
+                      })
+                      .slice(0, 15)
+                      .map(l => (
+                        <div
+                          key={l.usuario_id}
+                          onClick={() => {
+                            setObsUsuarioId(String(l.usuario_id));
+                            setObsBusqueda(`${l.apellido}, ${l.nombre} (DNI: ${l.dni})`);
+                          }}
+                          style={{
+                            padding: '0.6rem 0.75rem',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid var(--border-color)',
+                            backgroundColor: obsUsuarioId === String(l.usuario_id) ? 'var(--primary-glow)' : 'transparent',
+                            fontSize: '0.85rem',
+                            transition: 'background 0.15s'
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--primary-glow)'}
+                          onMouseLeave={(e) => { if (obsUsuarioId !== String(l.usuario_id)) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                        >
+                          <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{l.apellido}, {l.nombre}</span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>DNI: {l.dni}</span>
+                        </div>
+                      ))}
+                    {legajos.filter(l => {
+                      const term = obsBusqueda.toLowerCase();
+                      return (
+                        l.nombre.toLowerCase().includes(term) ||
+                        l.apellido.toLowerCase().includes(term) ||
+                        l.dni.includes(term)
+                      );
+                    }).length === 0 && (
+                      <div style={{ padding: '0.75rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                        No se encontraron estudiantes con ese criterio
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
