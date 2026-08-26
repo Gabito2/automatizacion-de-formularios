@@ -718,33 +718,36 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {observaciones.map((obs) => (
-                    <div key={obs.id} style={{
-                      display: 'flex',
-                      gap: '1rem',
-                      padding: '1rem',
-                      borderRadius: 'var(--radius-md)',
-                      backgroundColor: 'var(--warning-light)',
-                      border: '1px solid var(--warning-border)',
-                    }}>
-                      <div style={{ color: 'var(--warning)', marginTop: '0.15rem' }}>
-                        <AlertCircle size={20} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
-                          <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--primary)' }}>
-                            Documento: {nombresDocumentos[obs.tipo_documento]}
-                          </span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            {new Date(obs.fecha).toLocaleDateString('es-AR')} {new Date(obs.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                  {observaciones.map((obs) => {
+                    const esGeneral = obs.tipo_documento === 'general';
+                    return (
+                      <div key={obs.id} style={{
+                        display: 'flex',
+                        gap: '1rem',
+                        padding: '1rem',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: esGeneral ? '#ebf8ff' : 'var(--warning-light)',
+                        border: `1px solid ${esGeneral ? '#90cdf4' : 'var(--warning-border)'}`,
+                      }}>
+                        <div style={{ color: esGeneral ? '#3182ce' : 'var(--warning)', marginTop: '0.15rem' }}>
+                          <AlertCircle size={20} />
                         </div>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', fontStyle: 'italic' }}>
-                          "{obs.mensaje}"
-                        </p>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.25rem' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.9rem', color: esGeneral ? '#2b6cb0' : 'var(--primary)' }}>
+                              {esGeneral ? '📢 Comunicación General' : `Documento: ${nombresDocumentos[obs.tipo_documento]}`}
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              {new Date(obs.fecha).toLocaleDateString('es-AR')} {new Date(obs.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', fontStyle: 'italic' }}>
+                            "{obs.mensaje}"
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

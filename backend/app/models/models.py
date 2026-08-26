@@ -65,11 +65,16 @@ class Documento(Base):
 
 class Observacion(Base):
     __tablename__ = "observaciones"
+    __table_args__ = (
+        Index("ix_observaciones_usuario", "usuario_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    documento_id = Column(Integer, ForeignKey("documentos.id", ondelete="CASCADE"), nullable=False)
+    documento_id = Column(Integer, ForeignKey("documentos.id", ondelete="CASCADE"), nullable=True)  # Null para obs generales
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=True)  # Para obs generales
     mensaje = Column(Text, nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
 
-    # Relación
+    # Relaciones
     documento = relationship("Documento", back_populates="observaciones")
+    usuario = relationship("Usuario")

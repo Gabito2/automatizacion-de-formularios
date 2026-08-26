@@ -403,9 +403,15 @@ def enviar_observacion(
     # Enviar correos y registrar observación en la DB para cada estudiante
     enviados = 0
     for est in estudiantes:
-        # Registrar observación en la tabla de observaciones (ligada al usuario, no a un documento)
-        # Usamos la tabla documentos observaciones con documento_id=None no es posible,
-        # así que registramos en el log y enviamos email
+        # Registrar observación general en la tabla observaciones (ligada al usuario)
+        obs = Observacion(
+            usuario_id=est.id,
+            documento_id=None,  # Observación general, no asociada a un documento específico
+            mensaje=f"[Observación General] {data.mensaje.strip()}"
+        )
+        db.add(obs)
+
+        # Enviar correo de notificación
         EmailService.send_general_observation(
             background_tasks=background_tasks,
             to_email=est.email,
@@ -413,6 +419,8 @@ def enviar_observacion(
             observacion=data.mensaje.strip()
         )
         enviados += 1
+
+    db.commit()
 
     return {
         "message": f"Observación enviada exitosamente a {enviados} estudiante(s).",

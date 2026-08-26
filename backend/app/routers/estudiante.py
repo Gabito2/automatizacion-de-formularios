@@ -2,6 +2,7 @@ import os
 import base64
 import random
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -266,14 +267,15 @@ def upload_document(
     db.commit()
     db.refresh(doc_record)
 
-    # 4. Procesamiento Inteligente / OCR (Solo para DNI frente o DNI dorso — imágenes y PDFs)
+    # 4. Procesamiento Inteligente / OCR (Solo para DNI frente — imágenes y PDFs)
+    # DNI dorso y foto 4x4 se suben sin análisis.
     ocr_results = None
     quality_report = None
     ocr_extracted_fields = None
     
     isprocessable = ext in {".jpg", ".jpeg", ".png", ".pdf"}
     
-    if tipo_documento in ["dni_frente", "dni_dorso"] and isprocessable:
+    if tipo_documento == "dni_frente" and isprocessable:
         # Resolver ruta física absoluta
         absolute_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", saved_path))
         
@@ -397,20 +399,33 @@ def get_estado_legajo(
     else:
         estado_general = "aprobado"
         
-    # Obtener todas las observaciones detalladas del historial
-    historial_observaciones = db.query(Observacion).join(Documento).filter(
+    # Obtener observaciones de documentos + observaciones generales del admin
+    historial_obs_docs = db.query(Observacion).join(Documento).filter(
         Documento.usuario_id == current_student.id
-    ).order_by(Observacion.fecha.desc()).all()
-    
-    reporte_observaciones = [
-        {
+    ).all()
+
+    historial_obs_generales = db.query(Observacion).filter(
+        Observacion.usuario_id == current_student.id,
+        Observacion.documento_id == None
+    ).all()
+
+    # Unificar y ordenar por fecha descendente
+    todas_observaciones = historial_obs_docs + historial_obs_generales
+    todas_observaciones.sort(key=lambda o: o.fecha or datetime.min, reverse=True)
+
+    reporte_observaciones = []
+    for obs in todas_observaciones:
+        item = {
             "id": obs.id,
             "documento_id": obs.documento_id,
-            "tipo_documento": obs.documento.tipo_documento,
             "mensaje": obs.mensaje,
-            "fecha": obs.fecha
-        } for obs in historial_observaciones
-    ]
+            "fecha": obs.fecha,
+        }
+        if obs.documento_id and obs.documento:
+            item["tipo_documento"] = obs.documento.tipo_documento
+        else:
+            item["tipo_documento"] = "general"
+        reporte_observaciones.append(item)
     
     # Validar si tiene completo el formulario de datos personales
     tiene_datos_personales = current_student.datos_personales is not None
@@ -521,12 +536,12 @@ def upload_document_camara(
     db.commit()
     db.refresh(doc_record)
 
-    # Procesamiento OCR (solo para DNI frente/dorso)
+    # Procesamiento OCR (solo para DNI frente)
     ocr_results = None
     quality_report = None
     ocr_extracted_fields = None
 
-    if tipo_documento in ["dni_frente", "dni_dorso"]:
+    if tipo_documento == "dni_frente":
         absolute_path = saved_full_path
         user_info = {
             "dni": current_student.dni,
