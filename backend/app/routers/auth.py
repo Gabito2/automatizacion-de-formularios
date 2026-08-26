@@ -87,7 +87,13 @@ def change_password(
     current_user: Usuario = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-    """Permite al usuario cambiar su contraseña actual y remueve la bandera de primer_ingreso."""
+    """Solo administradores y validadores pueden cambiar contraseñas."""
+    if current_user.rol not in ("administrador", "validador"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los estudiantes no tienen permitido cambiar su contraseña. Su contraseña es su número de DNI."
+        )
+
     if not verify_password(data.old_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -95,7 +101,6 @@ def change_password(
         )
         
     current_user.password_hash = get_password_hash(data.new_password)
-    current_user.primer_ingreso = False
     db.commit()
     return {"message": "Contraseña cambiada exitosamente"}
 

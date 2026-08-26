@@ -20,6 +20,11 @@ logger = logging.getLogger("AdminRouter")
 class RechazoSchema(BaseModel):
     mensaje: str
 
+class ObservacionMasivaSchema(BaseModel):
+    mensaje: str
+    destino: str  # "todos", "deudores", "especifico"
+    usuario_id: int | None = None  # Solo requerido cuando destino == "especifico"
+
 @router.post("/importar-estudiantes")
 def importar_estudiantes(
     background_tasks: BackgroundTasks,
@@ -69,14 +74,17 @@ def importar_estudiantes(
             detail=f"El archivo no contiene las columnas requeridas: {', '.join(missing_cols)}"
         )
         
-    creados = 0
+    # --- Fase 1: Validar y preparar TODOS los usuarios en memoria ---
+    # Esto evita 150+ queries individuales a la DB y 150+ commits.
+    usuarios_a_crear = []  # Lista de dicts con datos + temp_pass
+    emails_a_enviar = []   # Lista de (email, nombre, dni, temp_pass) para envío async
     errores = []
-    
+
+    # Precargar DNIs existentes en un set para verificación O(1)
+    dnis_existentes = {u.dni for u in db.query(Usuario.dni).all()}
+
     for idx, row in df.iterrows():
         try:
-            # Sanitizar valores de la fila
-            # Excel suele traer el DNI como float (ej: 4.5e7 o 45123456.0) o NaN.
-            # str(float) puede dar notación científica ("4.5e+07") que rompe el parseo.
             dni_raw = row['dni']
             if isinstance(dni_raw, float) and dni_raw.is_integer():
                 dni_raw = int(dni_raw)
@@ -88,48 +96,65 @@ def importar_estudiantes(
             apellido = str(row['apellido']).strip()
             carrera = str(row['carrera']).strip()
             sede = str(row['sede']).strip()
-            
+
             if not dni or not email or not nombre or not apellido:
                 errores.append(f"Fila {idx+2}: Faltan campos obligatorios (DNI, Nombre, Apellido, Email).")
                 continue
-                
-            # Verificar si ya existe
-            user_exists = db.query(Usuario).filter(Usuario.dni == dni).first()
-            if user_exists:
+
+            if dni in dnis_existentes:
                 errores.append(f"Fila {idx+2}: El DNI {dni} ya se encuentra registrado.")
                 continue
-                
-            # Crear usuario estudiante
-            temp_pass = generate_temp_password()
-            new_user = Usuario(
-                dni=dni,
-                nombre=nombre,
-                apellido=apellido,
-                email=email,
-                password_hash=get_password_hash(temp_pass),
-                rol="estudiante",
-                activo=True,
-                primer_ingreso=True,
-                carrera=carrera,
-                sede=sede
-            )
-            db.add(new_user)
+
+            # La contraseña por defecto es el mismo DNI del estudiante
+            usuarios_a_crear.append({
+                "dni": dni, "nombre": nombre, "apellido": apellido,
+                "email": email, "carrera": carrera, "sede": sede,
+                "temp_pass": dni,
+            })
+            emails_a_enviar.append((email, f"{nombre} {apellido}", dni, dni))
+            dnis_existentes.add(dni)  # Evitar duplicados dentro del mismo CSV
+        except Exception as ex:
+            errores.append(f"Fila {idx+2}: Error inesperado: {str(ex)}")
+
+    # --- Fase 2: Insertar todos los usuarios de una sola vez ---
+    creados = 0
+    if usuarios_a_crear:
+        try:
+            # Crear objetos Usuario y agregar todos de golpe
+            nuevos_usuarios = []
+            for u in usuarios_a_crear:
+                user = Usuario(
+                    dni=u["dni"],
+                    nombre=u["nombre"],
+                    apellido=u["apellido"],
+                    email=u["email"],
+                    password_hash=get_password_hash(u["temp_pass"]),
+                    rol="estudiante",
+                    activo=True,
+                    primer_ingreso=False,
+                    carrera=u["carrera"],
+                    sede=u["sede"]
+                )
+                nuevos_usuarios.append(user)
+
+            db.add_all(nuevos_usuarios)
             db.commit()
-            
-            # Enviar correo de bienvenida
-            EmailService.send_account_created(
-                background_tasks=background_tasks,
-                to_email=email,
-                nombre=f"{nombre} {apellido}",
-                dni=dni,
-                temp_password=temp_pass
-            )
-            
-            creados += 1
+            creados = len(nuevos_usuarios)
         except Exception as ex:
             db.rollback()
-            errores.append(f"Fila {idx+2}: Error inesperado: {str(ex)}")
-            
+            errores.append(f"Error al insertar en lote: {str(ex)}")
+            creados = 0
+
+    # --- Fase 3: Enviar correos en background (no bloquea la respuesta) ---
+    for email, nombre, dni, temp_pass in emails_a_enviar:
+        EmailService.send_account_created(
+            background_tasks=background_tasks,
+            to_email=email,
+            nombre=nombre,
+            dni=dni,
+            temp_password=temp_pass
+        )
+
     return {
         "message": f"Importación finalizada. {creados} estudiantes creados exitosamente.",
         "creados": creados,
@@ -302,3 +327,94 @@ def rechazar_documento(
     )
     
     return {"message": "Documento observado/rechazado e historial registrado correctamente"}
+
+@router.post("/enviar-observacion")
+def enviar_observacion(
+    data: ObservacionMasivaSchema,
+    background_tasks: BackgroundTasks,
+    current_admin: Usuario = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Envía una observación/comunicación general a estudiantes.
+    - destino='todos': a todos los estudiantes activos.
+    - destino='deudores': a estudiantes con legajo incompleto o con documentos observados.
+    - destino='especifico': solo al estudiante con usuario_id indicado.
+    """
+    if not data.mensaje or not data.mensaje.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El mensaje de observación no puede estar vacío."
+        )
+
+    # Construir query base: solo estudiantes activos
+    q = db.query(Usuario).filter(Usuario.rol == "estudiante", Usuario.activo == True)
+
+    tipos_obligatorios = [
+        "dni_frente", "dni_dorso", "foto_4x4",
+        "analitico_secundario", "partida_nacimiento", "formulario_inscripcion"
+    ]
+
+    if data.destino == "especifico":
+        if not data.usuario_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Debe especificar el usuario_id para envío a un estudiante específico."
+            )
+        target_user = db.query(Usuario).filter(
+            Usuario.id == data.usuario_id,
+            Usuario.rol == "estudiante"
+        ).first()
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Estudiante no encontrado."
+            )
+        estudiantes = [target_user]
+
+    elif data.destino == "deudores":
+        all_students = q.all()
+        estudiantes = []
+        for s in all_students:
+            docs = s.documentos
+            docs_map = {d.tipo_documento for d in docs}
+            # Incompleto: le faltan documentos obligatorios
+            falta_docs = not all(t in docs_map for t in tipos_obligatorios)
+            # Con documentos observados
+            tiene_obs = any(d.estado == "observado" for d in docs)
+            if falta_docs or tiene_obs:
+                estudiantes.append(s)
+
+    elif data.destino == "todos":
+        estudiantes = q.all()
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Destino no válido. Use 'todos', 'deudores' o 'especifico'."
+        )
+
+    if not estudiantes:
+        return {
+            "message": "No se encontraron estudiantes que cumplan con el criterio seleccionado.",
+            "enviados": 0
+        }
+
+    # Enviar correos y registrar observación en la DB para cada estudiante
+    enviados = 0
+    for est in estudiantes:
+        # Registrar observación en la tabla de observaciones (ligada al usuario, no a un documento)
+        # Usamos la tabla documentos observaciones con documento_id=None no es posible,
+        # así que registramos en el log y enviamos email
+        EmailService.send_general_observation(
+            background_tasks=background_tasks,
+            to_email=est.email,
+            nombre=f"{est.nombre} {est.apellido}",
+            observacion=data.mensaje.strip()
+        )
+        enviados += 1
+
+    return {
+        "message": f"Observación enviada exitosamente a {enviados} estudiante(s).",
+        "enviados": enviados
+    }

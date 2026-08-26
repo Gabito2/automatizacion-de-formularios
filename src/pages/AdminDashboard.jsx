@@ -4,7 +4,7 @@ import {
   FileSpreadsheet, Users, FileCheck, FileWarning, Search,
   Filter, Check, X, Eye, LogOut,
   AlertCircle, Info, Sparkles, GraduationCap, UploadCloud,
-  Loader2, RefreshCw, FileText
+  Loader2, RefreshCw, FileText, MessageSquare, Send
 } from 'lucide-react';
 
 export default function AdminDashboard({ user, onLogout }) {
@@ -25,12 +25,21 @@ export default function AdminDashboard({ user, onLogout }) {
   const [showRechazoModal, setShowRechazoModal] = useState(false);
   const [docToRechazar, setDocToRechazar] = useState(null);
   const [verificandoLoading, setVerificandoLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   
   // Sección de Importación Masiva
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState(null);
+
+  // Sección de Observación Masiva
+  const [showObsModal, setShowObsModal] = useState(false);
+  const [obsDestino, setObsDestino] = useState('todos'); // 'todos' | 'deudores' | 'especifico'
+  const [obsMensaje, setObsMensaje] = useState('');
+  const [obsUsuarioId, setObsUsuarioId] = useState('');
+  const [obsLoading, setObsLoading] = useState(false);
+  const [obsResult, setObsResult] = useState(null);
 
   // Estadísticas del Dashboard
   const [stats, setStats] = useState({
@@ -41,8 +50,9 @@ export default function AdminDashboard({ user, onLogout }) {
     incompletos: 0
   });
 
-  const cargarLegajos = async () => {
-    setLoading(true);
+  const cargarLegajos = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     setError('');
     try {
       const filters = {};
@@ -67,14 +77,15 @@ export default function AdminDashboard({ user, onLogout }) {
       setError('Error al obtener la lista de legajos.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };  useEffect(() => {
-    cargarLegajos();
+    cargarLegajos(false);
   }, [filtroCarrera, filtroEstado]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    cargarLegajos();
+    cargarLegajos(false);
   };
 
   // Importar archivo
@@ -89,7 +100,7 @@ export default function AdminDashboard({ user, onLogout }) {
       const res = await adminAPI.importarEstudiantes(importFile);
       setImportResult(res);
       setImportFile(null);
-      await cargarLegajos(); // Recargar dashboard
+      await cargarLegajos(false); // Recargar dashboard
     } catch (err) {
       setError(err.response?.data?.detail || 'Error al importar los estudiantes.');
     } finally {
@@ -145,7 +156,7 @@ export default function AdminDashboard({ user, onLogout }) {
         }
       }
       
-      await cargarLegajos();
+      await cargarLegajos(false);
     } catch {
       setError('No se pudo aprobar el documento.');
     } finally {
@@ -193,11 +204,35 @@ export default function AdminDashboard({ user, onLogout }) {
       
       setDocToRechazar(null);
       setMensajeRechazo('');
-      await cargarLegajos();
+      await cargarLegajos(false);
     } catch {
       setError('No se pudo guardar la observación del documento.');
     } finally {
       setVerificandoLoading(false);
+    }
+  };
+
+  // Enviar observación masiva
+  const handleEnviarObservacion = async () => {
+    if (!obsMensaje.trim()) return;
+    if (obsDestino === 'especifico' && !obsUsuarioId) return;
+
+    setObsLoading(true);
+    setObsResult(null);
+    setError('');
+    try {
+      const res = await adminAPI.enviarObservacion(
+        obsMensaje.trim(),
+        obsDestino,
+        obsDestino === 'especifico' ? parseInt(obsUsuarioId) : null
+      );
+      setObsResult(res);
+      setObsMensaje('');
+      setObsUsuarioId('');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Error al enviar la observación.');
+    } finally {
+      setObsLoading(false);
     }
   };
 
@@ -311,7 +346,7 @@ export default function AdminDashboard({ user, onLogout }) {
         {/* ACCIÓN IMPORTAR ESTUDIANTES */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)' }}>Control de Legajos Digitales</h2>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <button 
               className="btn btn-primary"
               onClick={() => { setShowImportPanel(!showImportPanel); setImportResult(null); }}
@@ -319,6 +354,14 @@ export default function AdminDashboard({ user, onLogout }) {
             >
               <FileSpreadsheet size={18} />
               {showImportPanel ? 'Ocultar Importación' : 'Importación Masiva'}
+            </button>
+            <button 
+              className="btn btn-primary"
+              onClick={() => { setShowObsModal(true); setObsResult(null); setObsMensaje(''); setObsDestino('todos'); setObsUsuarioId(''); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--accent)', borderColor: 'var(--accent)' }}
+            >
+              <MessageSquare size={18} />
+              Enviar Observación
             </button>
           </div>
         </div>
@@ -393,10 +436,11 @@ export default function AdminDashboard({ user, onLogout }) {
               <span><Users size={20} /> Estudiantes Preinscriptos ({legajos.length})</span>
               <button 
                 className="btn btn-secondary btn-sm" 
-                onClick={cargarLegajos}
+                onClick={() => cargarLegajos(true)}
+                disabled={refreshing}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', padding: '0.3rem 0.6rem' }}
               >
-                <RefreshCw size={12} /> Refrescar
+                <RefreshCw size={12} style={refreshing ? { animation: 'spin 1s linear infinite' } : {}} /> {refreshing ? 'Actualizando...' : 'Refrescar'}
               </button>
             </h3>
             
@@ -685,6 +729,135 @@ export default function AdminDashboard({ user, onLogout }) {
           )}
         </div>
       </div>
+
+      {/* MODAL PARA OBSERVACIÓN MASIVA */}
+      {showObsModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+          backdropFilter: 'blur(4px)'
+        }}>
+          <div className="card animate-fade-in-up" style={{ maxWidth: '560px', width: '100%', padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.15rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <MessageSquare size={20} /> Enviar Observación General
+              </h3>
+              <button className="btn btn-secondary btn-sm" style={{ padding: '0.25rem' }} onClick={() => setShowObsModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+              Envíe un mensaje o comunicacion a uno o más estudiantes. Recibirán un correo electrónico notificándolos.
+            </p>
+
+            {/* Selector de destino */}
+            <div className="form-group">
+              <label className="form-label">¿A quién desea enviar la observación? *</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
+                {[
+                  { value: 'todos', label: 'Todos los estudiantes', desc: 'Envía a todos los estudiantes activos del sistema' },
+                  { value: 'deudores', label: 'Estudiantes que deben documentación', desc: 'Solo a quienes les faltan documentos o tienen legajo observado' },
+                  { value: 'especifico', label: 'Un estudiante en específico', desc: 'Seleccionar un estudiante de la lista' },
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '0.75rem',
+                      padding: '0.6rem 0.75rem',
+                      borderRadius: 'var(--radius-md)',
+                      border: `1px solid ${obsDestino === opt.value ? 'var(--primary)' : 'var(--border-color)'}`,
+                      backgroundColor: obsDestino === opt.value ? 'var(--primary-glow)' : 'white',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="obs-destino"
+                      value={opt.value}
+                      checked={obsDestino === opt.value}
+                      onChange={(e) => setObsDestino(e.target.value)}
+                      style={{ marginTop: '3px', accentColor: 'var(--primary)' }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--primary)' }}>{opt.label}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Selector de estudiante específico */}
+            {obsDestino === 'especifico' && (
+              <div className="form-group animate-fade-in" style={{ marginTop: '1rem' }}>
+                <label className="form-label" htmlFor="obs-estudiante">Seleccionar Estudiante *</label>
+                <select
+                  id="obs-estudiante"
+                  className="form-control form-select"
+                  value={obsUsuarioId}
+                  onChange={(e) => setObsUsuarioId(e.target.value)}
+                >
+                  <option value="">-- Seleccione un estudiante --</option>
+                  {legajos.map(l => (
+                    <option key={l.usuario_id} value={l.usuario_id}>
+                      {l.apellido}, {l.nombre} (DNI: {l.dni})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Campo de mensaje */}
+            <div className="form-group" style={{ marginTop: '1rem' }}>
+              <label className="form-label" htmlFor="obs-mensaje">Mensaje / Observación *</label>
+              <textarea
+                id="obs-mensaje"
+                className="form-control"
+                rows="4"
+                placeholder="Ej: Estimados estudiantes, les recordamos que la fecha límite para subir la documentación es el 30 de septiembre..."
+                value={obsMensaje}
+                onChange={(e) => setObsMensaje(e.target.value)}
+              />
+            </div>
+
+            {/* Resultado del envío */}
+            {obsResult && (
+              <div className="alert alert-success" style={{ marginTop: '1rem' }}>
+                <Check size={18} style={{ flexShrink: 0 }} />
+                <span>{obsResult.message}</span>
+              </div>
+            )}
+
+            {/* Acciones */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+              <button className="btn btn-secondary" onClick={() => setShowObsModal(false)}>
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleEnviarObservacion}
+                disabled={obsLoading || !obsMensaje.trim() || (obsDestino === 'especifico' && !obsUsuarioId)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {obsLoading ? <div className="spinner" /> : <><Send size={16} /> Enviar Observación</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL PARA OBSERVACIONES/RECHAZO */}
       {showRechazoModal && (

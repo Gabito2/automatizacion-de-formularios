@@ -1,0 +1,152 @@
+nombre,apellido,dni,email,carrera,sede
+Juan,Pérez,45123456,jperez@gmail.com,Ingeniería en Sistemas,Sede Centro
+María,González,40234567,maria.gonzalez@hotmail.com,Ingeniería en Sistemas,Sede Centro
+Carlos,López,38987654,clopez@yahoo.com,Licenciatura en Administración,Sede Norte
+Luciana,Fernández,41567890,lfernandez@gmail.com,Contador Público,Sede Centro
+Martín,Rodríguez,43210987,mrodriguez@outlook.com,Ingeniería Civil,Sede Sur
+Camila,Sánchez,39876543,csanchez@gmail.com,Licenciatura en Enfermería,Sede Centro
+Alejandro,Díaz,42345678,adiaz@hotmail.com,Ingeniería Electrónica,Sede Norte
+Valentina,Martínez,37654321,vmartinez@gmail.com,Licenciatura en Psicología,Sede Centro
+Diego,García,44567890,dgarcia@yahoo.com,Abogacía,Sede Sur
+Sofía,López,46789012,slopez@gmail.com,Ingeniería en Sistemas,Sede Centro
+Fernando,Hernández,35432109,fhernandez@hotmail.com,Licenciatura en Administración,Sede Norte
+Isabella,Romero,41098765,iromero@gmail.com,Contador Público,Sede Centro
+Nicolás,Torres,43678901,ntorres@outlook.com,Ingeniería Mecánica,Sede Sur
+Daniela,Ruiz,38234567,druiz@gmail.com,Licenciatura en Enfermería,Sede Centro
+Sebastián,Álvarez,40345678,salvarez@hotmail.com,Ingeniería Civil,Sede Norte
+Juliana,Morales,42567890,jmorales@gmail.com,Licenciatura en Psicología,Sede Centro
+Pablo,Silva,39123456,psilva@yahoo.com,Abogacía,Sede Sur
+Victoria,Ortiz,45432109,vortiz@gmail.com,Ingeniería Electrónica,Sede Centro
+Rodrigo,Vargas,37890123,rvargas@hotmail.com,Licenciatura en Administración,Sede Norte
+Camila,Jiménez,41234567,cjimenez@gmail.com,Contador Público,Sede Centro
+Matías,Castro,43456789,mcastro@outlook.com,Ingeniería Mecánica,Sede Sur
+Florencia,Dominguez,36543210,fdominguez@gmail.com,Licenciatura en Enfermería,Sede Centro
+Lucas,Reyes,44678901,lreyes@hotmail.com,Ingeniería Civil,Sede Norte
+Agustín,Peralta,42012345,aperalta@gmail.com,Licenciatura en Psicología,Sede Centro
+Marina,Córdoba,39567890,mcordoba@yahoo.com,Abogacía,Sede Sur
+Gonzalo,Ríos,40890123,grios@gmail.com,Ingeniería en Sistemas,Sede Centro
+Laura,Medina,38345678,lmedina@hotmail.com,Licenciatura en Administración,Sede Norte
+Mateo,Acosta,41678901,macosta@gmail.com,Contador Público,Sede Centro
+Belen,Castillo,43901234,bcastillo@outlook.com,Ingeniería Electrónica,Sede Sur
+Facundo,Mendoza,37123456,mmendoza@gmail.com,Licenciatura en Enfermería,Sede Centro
+Catalina,Vega,45345678,cvega@hotmail.com,Ingeniería Civil,Sede Norte
+Emilio,Flores,39456789,eflores@gmail.com,Licenciatura en Psicología,Sede Centro
+Valeria,Guerrero,40567890,vguerrero@yahoo.com,Abogacía,Sede Sur
+Tomás,Ramos,42890123,tramos@gmail.com,Ingeniería Mecánica,Sede Centro
+Lucía,Giménez,36789012,lgimenez@hotmail.com,Licenciatura en Administración,Sede Norte
+Franco,Paz,41345678,fpaz@gmail.com,Contador Público,Sede Centro
+Adriana,Suárez,44123456,asuarez@outlook.com,Ingeniería Electrónica,Sede Sur
+Ignacio,Cabrera,38567890,icabrera@gmail.com,Licenciatura en Enfermería,Sede Centro
+Paula,Delgado,37234567,pdelgado@hotmail.com,Ingeniería Civil,Sede Norte
+Leandro,Benítez,43567890,lbenitez@gmail.com,Licenciatura en Psicología,Sede Centro
+Micaela,Sosa,40678901,msosa@yahoo.com,Abogacía,Sede Sur
+Ramiro,Ibarra,42234567,ribarra@gmail.com,Ingeniería en Sistemas,Sede Centro
+Constanza,Aguilar,39901234,caguilar@hotmail.com,Licenciatura en Administración,Sede Norte
+Bruno,Molina,41789012,bmolina@gmail.com,Contador Público,Sede Centro
+Julieta,Herrera,35678901,jherrera@outlook.com,Ingeniería Mecánica,Sede Sur
+Federico,Campos,44234567,fcampos@gmail.com,Licenciatura en Enfermería,Sede Centro
+Amanda,Cordero,38901234,acordero@hotmail.com,Ingeniería Civil,Sede Norte
+Simón,Peña,42456789,simpena@gmail.com,Licenciatura en Psicología,Sede Centro
+Natalia,Coronel,40012345,ncoronel@yahoo.com,Abogacía,Sede Sur
+Germán,Villalba,37567890,gvillalba@gmail.com,Ingeniería Electrónica,Sede Centro
+Teresa,Luna,43123456,tluna@hotmail.com,Licenciatura en Administración,Sede Norte
+Maximiliano,Soto,41456789,msoto@gmail.com,Contador Público,Sede Centro
+Joaquín,Acevedo,45678901,jacevedo@outlook.com,Ingeniería Mecánica,Sede Sur
+Regina,Duarte,39234567,rduarte@gmail.com,Licenciatura en Enfermería,Sede Centro
+Alonso,Parra,40321098,aparra@hotmail.com,Ingeniería Civil,Sede Norte
+Carolina,Prieto,42789012,cprieto@gmail.com,Licenciatura en Psicología,Sede Centro
+Damián,Cuevas,38456789,dcuevas@yahoo.com,Abogacía,Sede Sur
+Olga,Rivas,41901234,orivas@gmail.com,Ingeniería en Sistemas,Sede Centro
+Guillermo,Navarro,44345678,gnavarro@hotmail.com,Licenciatura en Administración,Sede Norte
+Luisana,Miranda,37345678,lmiranda@gmail.com,Contador Público,Sede Centro
+Eduardo,Ponce,43789012,eponce@outlook.com,Ingeniería Electrónica,Sede Sur
+Mariana,Cuevas,36456789,mcuevas@gmail.com,Licenciatura en Enfermería,Sede Centro
+Hugo,Montero,42123456,hmontero@hotmail.com,Ingeniería Civil,Sede Norte
+Rocío,Leiva,40210987,rleiva@gmail.com,Licenciatura en Psicología,Sede Centro
+Santiago,Contreras,39678901,scontreras@yahoo.com,Abogacía,Sede Sur
+Ivonne,Salazar,45567890,fsalazar@gmail.com,Ingeniería Mecánica,Sede Centro
+Cristian,Rivera,38789012,crivera@hotmail.com,Licenciatura en Administración,Sede Norte
+Elena,Fuentes,41123456,efuentes@gmail.com,Contador Público,Sede Centro
+Gabriel,Nieves,43234567,gnieves@outlook.com,Ingeniería Electrónica,Sede Sur
+Alma,Tapia,37901234,atapia@gmail.com,Licenciatura en Enfermería,Sede Centro
+Francisco,Meza,44901234,fmeza@hotmail.com,Ingeniería Civil,Sede Norte
+Julia,Rojas,42567891,jrojas@gmail.com,Licenciatura en Psicología,Sede Centro
+Lautaro,Oliveira,40456789,oliveira@yahoo.com,Abogacía,Sede Sur
+Lorena,Vargas,39123457,lvargas@gmail.com,Ingeniería en Sistemas,Sede Centro
+Enzo,Silva,41567891,esilva@hotmail.com,Licenciatura en Administración,Sede Norte
+Carla,Rojas,45890123,crojas@gmail.com,Contador Público,Sede Centro
+Mauricio,Paredes,38012345,mparedes@outlook.com,Ingeniería Mecánica,Sede Sur
+Andrea,Núñez,37678901,anunez@gmail.com,Licenciatura en Enfermería,Sede Centro
+Nahuel,Gómez,42901234,ngomez@hotmail.com,Ingeniería Civil,Sede Norte
+Daniela,Alonso,40789012,dalonso@gmail.com,Licenciatura en Psicología,Sede Centro
+Hernán,Burgos,36345678,hburgos@yahoo.com,Abogacía,Sede Sur
+Romina,Salas,43678902,rsalas@gmail.com,Ingeniería Electrónica,Sede Centro
+Claudio,Lara,44456789,clara@hotmail.com,Licenciatura en Administración,Sede Norte
+Gabriela,Reina,41012345,greina@gmail.com,Contador Público,Sede Centro
+Iván,Guzmán,39345678,iguzman@outlook.com,Ingeniería Mecánica,Sede Sur
+Silvina,Paredes,38123456,sparedes@gmail.com,Licenciatura en Enfermería,Sede Centro
+Óscar,Mena,42678901,omena@hotmail.com,Ingeniería Civil,Sede Norte
+Delfina,Rivero,40123456,drivero@gmail.com,Licenciatura en Psicología,Sede Centro
+Thiago,Figueroa,45234567,tfigueroa@yahoo.com,Abogacía,Sede Sur
+Cecilia,Troncoso,37456789,ctroncoso@gmail.com,Ingeniería en Sistemas,Sede Centro
+Lisandro,Agüero,43890123,laguero@hotmail.com,Licenciatura en Administración,Sede Norte
+Milagros,Quinteros,41234568,mquinteros@gmail.com,Contador Público,Sede Centro
+Rodrigo,Acuña,39789012,rracuna@outlook.com,Ingeniería Electrónica,Sede Sur
+Pilar,Reynoso,38678901,preynoso@gmail.com,Licenciatura en Enfermería,Sede Centro
+Julián,Lescano,44789012,jlescano@hotmail.com,Ingeniería Civil,Sede Norte
+Nerea,Correa,42345679,ncorrea@gmail.com,Licenciatura en Psicología,Sede Centro
+Emanuel,Solís,40901234,esolis@yahoo.com,Abogacía,Sede Sur
+Abril,Ojeda,37543210,aojeda@gmail.com,Ingeniería Mecánica,Sede Centro
+Cristóbal,Ponce,41678902,cponce@hotmail.com,Licenciatura en Administración,Sede Norte
+Mora,Villanueva,45123457,mvillanueva@gmail.com,Contador Público,Sede Centro
+Lucas,Zárate,36234567,lzarate@outlook.com,Ingeniería Electrónica,Sede Sur
+Antonella,Córdoba,43456790,acordoba@gmail.com,Licenciatura en Enfermería,Sede Centro
+Thiago,Barrios,38321098,tbarrios@hotmail.com,Ingeniería Civil,Sede Norte
+Julia,Mansilla,40543210,jmansilla@gmail.com,Licenciatura en Psicología,Sede Centro
+Renato,Escobar,39012345,rescobar@yahoo.com,Abogacía,Sede Sur
+Catalina,Arrieta,42123457,carrieta@gmail.com,Ingeniería en Sistemas,Sede Centro
+Felipe,Salazar,44123457,fsalazar2@hotmail.com,Licenciatura en Administración,Sede Norte
+Mía,Ferreyra,37890124,mferreyra@gmail.com,Contador Público,Sede Centro
+Dante,Acosta,41890123,dacosta@outlook.com,Ingeniería Mecánica,Sede Sur
+Lola,Castro,45012345,lcastro@gmail.com,Licenciatura en Enfermería,Sede Centro
+Emiliano,Rojas,38210987,erojas@hotmail.com,Ingeniería Civil,Sede Norte
+Renata,Díaz,40432109,rdiaz@gmail.com,Licenciatura en Psicología,Sede Centro
+Benjamín,Solano,36123456,bsolano@yahoo.com,Abogacía,Sede Sur
+Emma,Gómez,43123457,egomez@gmail.com,Ingeniería Electrónica,Sede Centro
+Thiago,Luna,41901235,tluna2@hotmail.com,Licenciatura en Administración,Sede Norte
+Valentina,Sosa,37654322,vsosa@gmail.com,Contador Público,Sede Centro
+Santino,Medina,44234568,smedina@outlook.com,Ingeniería Mecánica,Sede Sur
+Delfina,García,39543210,dgarcia2@gmail.com,Licenciatura en Enfermería,Sede Centro
+Lautaro,Arias,40123457,larias@hotmail.com,Ingeniería Civil,Sede Norte
+Catalina,Moreno,42789013,cmoreno@gmail.com,Licenciatura en Psicología,Sede Centro
+Mateo,Gutiérrez,38890123,mgutierrez@yahoo.com,Abogacía,Sede Sur
+Isidora,Castro,41345679,icastro@gmail.com,Ingeniería en Sistemas,Sede Centro
+Santino,Pereyra,45678902,spereyra@hotmail.com,Licenciatura en Administración,Sede Norte
+Camila,Acosta,37234568,macosta2@gmail.com,Contador Público,Sede Centro
+Benicio,Vargas,43901235,bvargas@outlook.com,Ingeniería Electrónica,Sede Sur
+Isabella,Flores,39321098,iflores@gmail.com,Licenciatura en Enfermería,Sede Centro
+Lorenzo,Rivera,40789013,lrivera@hotmail.com,Ingeniería Civil,Sede Norte
+Emma,Álvarez,42456790,ealvarez@gmail.com,Licenciatura en Psicología,Sede Centro
+Santino,Silva,36012345,ssilva@yahoo.com,Abogacía,Sede Sur
+Juana,Gómez,41567892,jgomez@gmail.com,Ingeniería Mecánica,Sede Centro
+Emilio,Castro,43210988,ecastro@hotmail.com,Licenciatura en Administración,Sede Norte
+Mora,Ruiz,38432109,mruiz@gmail.com,Contador Público,Sede Centro
+Felipe,Luna,44987654,fluna@outlook.com,Ingeniería Electrónica,Sede Sur
+Alma,Díaz,39765432,adiaz2@gmail.com,Licenciatura en Enfermería,Sede Centro
+Lautaro,García,40654321,lgarcia@hotmail.com,Ingeniería Civil,Sede Norte
+Isidora,Pérez,42321098,iperez@gmail.com,Licenciatura en Psicología,Sede Centro
+Santino,Romero,37432109,sromero@yahoo.com,Abogacía,Sede Sur
+Catalina,Martínez,41765432,cmartinez@gmail.com,Ingeniería en Sistemas,Sede Centro
+Lorenzo,Hernández,45321098,lhernandez@hotmail.com,Licenciatura en Administración,Sede Norte
+Julia,Morales,40234568,jmorales2@gmail.com,Contador Público,Sede Centro
+Santino,Duarte,42876543,sduarte@hotmail.com,Ingeniería Mecánica,Sede Sur
+Isidora,Luna,38543210,iluna@gmail.com,Licenciatura en Enfermería,Sede Centro
+Mateo,Ríos,41098766,mrios@hotmail.com,Ingeniería Civil,Sede Norte
+Emilia,Salas,43432109,esalas@gmail.com,Licenciatura en Psicología,Sede Centro
+Benjamín,Mora,39876544,bmora@yahoo.com,Abogacía,Sede Sur
+Emma,Torres,45432110,etorres@gmail.com,Ingeniería en Sistemas,Sede Centro
+Lautaro,Paz,37654323,lpaz@hotmail.com,Licenciatura en Administración,Sede Norte
+Valentina,Acosta,40987655,vacosta@gmail.com,Contador Público,Sede Centro
+Dante,Córdoba,42210987,dcordoba@outlook.com,Ingeniería Electrónica,Sede Sur
+Lucas,Giménez,38765433,lgimenez2@gmail.com,Licenciatura en Enfermería,Sede Centro
+Renata,García,41543211,rgarcia@hotmail.com,Ingeniería Civil,Sede Norte

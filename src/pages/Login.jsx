@@ -1,20 +1,15 @@
 import { useState } from 'react';
 import { authAPI } from '../services/api';
-import { GraduationCap, ShieldAlert, Key, Mail, Lock, User, CheckCircle, ArrowRight } from 'lucide-react';
+import { GraduationCap, ShieldAlert, Mail, Lock, User, CheckCircle, ArrowRight } from 'lucide-react';
 
-export default function Login({ onLoginSuccess, onRegisterClick }) {
+export default function Login({ onLoginSuccess }) {
   const [dni, setDni] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Estados de flujo alternativos
-  const [view, setView] = useState('login'); // 'login', 'recovery', 'change_password'
-  
-  // Datos para cambio de clave obligatorio
-  const [tempUser, setTempUser] = useState(null);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [view, setView] = useState('login'); // 'login', 'recovery'
   
   // Datos para recuperación
   const [recoveryEmail, setRecoveryEmail] = useState('');
@@ -36,47 +31,11 @@ export default function Login({ onLoginSuccess, onRegisterClick }) {
       // Guardar token temporalmente
       localStorage.setItem('token', access_token);
       
-      if (user.primer_ingreso) {
-        setTempUser(user);
-        setView('change_password');
-      } else {
-        localStorage.setItem('user', JSON.stringify(user));
-        onLoginSuccess(user);
-      }
+      localStorage.setItem('user', JSON.stringify(user));
+      onLoginSuccess(user);
     } catch (err) {
       localStorage.removeItem('token');
       setError(err.response?.data?.detail || 'DNI o contraseña incorrectos.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleChangePasswordSubmit = async (e) => {
-    e.preventDefault();
-    if (!newPassword || !confirmPassword) {
-      setError('Por favor complete todos los campos.');
-      return;
-    }
-    if (newPassword.length < 6) {
-      setError('La nueva contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError('Las contraseñas no coinciden.');
-      return;
-    }
-
-    setError('');
-    setLoading(true);
-    try {
-      await authAPI.changePassword(password, newPassword);
-      
-      // Contraseña cambiada, ahora guardamos el usuario definitivo y logueamos
-      const updatedUser = { ...tempUser, primer_ingreso: false };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-      onLoginSuccess(updatedUser);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Error al cambiar la contraseña. Intente nuevamente.');
     } finally {
       setLoading(false);
     }
@@ -166,9 +125,8 @@ export default function Login({ onLoginSuccess, onRegisterClick }) {
             UNdeC
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', fontWeight: 500 }}>
-            {view === 'login' && 'Portal de Preinscripción a Distancia'}
+            {view === 'login' && 'Portal de Acceso a Distancia'}
             {view === 'recovery' && 'Recuperación de Contraseña'}
-            {view === 'change_password' && 'Cambio Obligatorio de Contraseña'}
           </p>
         </div>
 
@@ -262,26 +220,7 @@ export default function Login({ onLoginSuccess, onRegisterClick }) {
                 </>
               )}
             </button>
-            <div style={{ textAlign: 'center', marginTop: '1.25rem' }}>
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                ¿No tienes cuenta?{' '}
-                <button
-                  type="button"
-                  onClick={onRegisterClick}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: 'var(--primary)',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    textDecoration: 'underline',
-                    padding: 0
-                  }}
-                >
-                  Preinscríbete aquí
-                </button>
-              </span>
-            </div>
+
           </form>
         )}
 
@@ -353,68 +292,7 @@ export default function Login({ onLoginSuccess, onRegisterClick }) {
           </form>
         )}
 
-        {/* Vista: CAMBIO OBLIGATORIO DE CONTRASEÑA */}
-        {view === 'change_password' && (
-          <form onSubmit={handleChangePasswordSubmit}>
-            <div className="alert alert-warning">
-              <Key size={20} style={{ flexShrink: 0 }} />
-              <span>Por seguridad, al ingresar por primera vez debe cambiar su contraseña temporal.</span>
-            </div>
 
-            <div className="form-group">
-              <label className="form-label" htmlFor="new-password">Nueva Contraseña</label>
-              <div style={{ position: 'relative' }}>
-                <Lock size={18} style={{
-                  position: 'absolute',
-                  left: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: 'var(--text-muted)'
-                }} />
-                <input
-                  id="new-password"
-                  type="password"
-                  className="form-control"
-                  style={{ paddingLeft: '2.5rem' }}
-                  placeholder="Mínimo 6 caracteres"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label" htmlFor="confirm-password">Confirmar Contraseña</label>
-              <div style={{ position: 'relative' }}>
-                <Lock size={18} style={{
-                  position: 'absolute',
-                  left: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: 'var(--text-muted)'
-                }} />
-                <input
-                  id="confirm-password"
-                  type="password"
-                  className="form-control"
-                  style={{ paddingLeft: '2.5rem' }}
-                  placeholder="Repita su nueva contraseña"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: '100%', padding: '0.8rem', marginTop: '1.25rem' }}
-              disabled={loading}
-            >
-              {loading ? <div className="spinner" /> : 'Confirmar y Entrar'}
-            </button>
-          </form>
-        )}
       </div>
     </div>
   );

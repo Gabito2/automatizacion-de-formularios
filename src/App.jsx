@@ -55,7 +55,7 @@ function App() {
     if (showRegister) {
       return <Preinscripcion onBackToLogin={() => setShowRegister(false)} />
     }
-    return <Login onLoginSuccess={handleLoginSuccess} onRegisterClick={() => setShowRegister(true)} />
+    return <Login onLoginSuccess={handleLoginSuccess} />
   }
 
   if (user.rol === 'administrador' || user.rol === 'validador') {

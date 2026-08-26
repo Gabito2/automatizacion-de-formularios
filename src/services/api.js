@@ -155,6 +155,14 @@ export const adminAPI = {
     const response = await api.put(`/admin/documento/${id}/rechazar`, { mensaje });
     return response.data;
   },
+  enviarObservacion: async (mensaje, destino, usuario_id = null) => {
+    const response = await api.post('/admin/enviar-observacion', {
+      mensaje,
+      destino,
+      usuario_id,
+    });
+    return response.data;
+  },
 };
 
 export default api;

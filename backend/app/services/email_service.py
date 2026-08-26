@@ -55,19 +55,19 @@ Cuerpo:
 class EmailService:
     @staticmethod
     def send_account_created(background_tasks: BackgroundTasks, to_email: str, nombre: str, dni: str, temp_password: str):
-        """Notificación de cuenta creada con credenciales temporales."""
-        subject = "Bienvenido a la UNdeC - Tu cuenta de preinscripción ha sido creada"
+        """Notificación de cuenta creada con credenciales de acceso."""
+        subject = "Bienvenido a la UNdeC - Tu cuenta ha sido creada"
         body = f"""
         <html>
             <body>
                 <h2>Hola {nombre}, bienvenido/a a la Universidad Nacional de Chilecito</h2>
                 <p>Se ha generado tu cuenta institucional para la gestión de tu legajo digital.</p>
-                <p>A continuación se detallan tus credenciales temporales para tu primer ingreso:</p>
+                <p>Tus credenciales de acceso son:</p>
                 <ul>
                     <li><strong>DNI (Usuario):</strong> {dni}</li>
-                    <li><strong>Contraseña temporal:</strong> {temp_password}</li>
+                    <li><strong>Contraseña:</strong> {temp_password}</li>
                 </ul>
-                <p><em>Nota: En tu primer ingreso, el sistema te solicitará obligatoriamente cambiar esta contraseña por motivos de seguridad.</em></p>
+                <p><em>Nota: Tu contraseña es la misma que tu número de DNI. Te recomendamos cambiarla desde tu panel por seguridad.</em></p>
                 <p>Accede al portal de matriculación para completar tu ficha personal y subir la documentación solicitada.</p>
                 <br>
                 <p>Saludos cordiales,<br>Secretaría de Alumnos - UNdeC</p>
@@ -98,6 +98,26 @@ class EmailService:
                 <p><strong>Documento:</strong> {doc_legible}</p>
                 <p><strong>Observación / Motivo:</strong> "{observacion}"</p>
                 <p>Por favor, ingresa al portal de preinscripción, elimina el archivo anterior y vuelve a subir un documento válido para que podamos continuar con tu matriculación.</p>
+                <br>
+                <p>Saludos cordiales,<br>Secretaría de Alumnos - UNdeC</p>
+            </body>
+        </html>
+        """
+        background_tasks.add_task(send_email_sync, to_email, subject, body)
+
+    @staticmethod
+    def send_general_observation(background_tasks: BackgroundTasks, to_email: str, nombre: str, observacion: str):
+        """Notificación de observación general enviada por el administrador."""
+        subject = "Comunicación de la UNdeC - Observación general sobre tu legajo"
+        body = f"""
+        <html>
+            <body>
+                <h2>Hola {nombre},</h2>
+                <p>El equipo administrativo de la Universidad Nacional de Chilecito desea comunicarte lo siguiente:</p>
+                <div style="background-color: #f8f9fa; border-left: 4px solid #3b82f6; padding: 12px 16px; margin: 16px 0; font-size: 14px;">
+                    <p style="margin:0; white-space: pre-wrap;">{observacion}</p>
+                </div>
+                <p>Si tenés alguna consulta, no dudes en comunicarte con la secretaría de alumnos.</p>
                 <br>
                 <p>Saludos cordiales,<br>Secretaría de Alumnos - UNdeC</p>
             </body>

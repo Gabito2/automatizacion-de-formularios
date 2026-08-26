@@ -1,10 +1,14 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Text, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
 
 class Usuario(Base):
     __tablename__ = "usuarios"
+    __table_args__ = (
+        # Índice compuesto para la consulta más frecuente del admin: filtrar legajos por rol + carrera
+        Index("ix_usuarios_rol_carrera", "rol", "carrera"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     dni = Column(String, unique=True, index=True, nullable=False)
@@ -41,6 +45,10 @@ class DatosPersonales(Base):
 
 class Documento(Base):
     __tablename__ = "documentos"
+    __table_args__ = (
+        # Índice compuesto para queries de legajos: filtrar documentos por usuario + tipo
+        Index("ix_documentos_usuario_tipo", "usuario_id", "tipo_documento"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
