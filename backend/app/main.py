@@ -1,5 +1,10 @@
 import sys
 import os
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
 # Asegurar que el directorio base 'backend' esté en el path para resolver la importación de 'app'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -46,6 +51,22 @@ app.include_router(admin.router)
 # Evento de inicio: Semilla para crear el usuario administrador por defecto
 @app.on_event("startup")
 def seed_admin_user():
+    # Verificar estado de Google Drive
+    try:
+        from app.services.drive_service import drive_service
+        if drive_service.is_available():
+            print("=========================================================")
+            print("GOOGLE DRIVE: Configurado y listo para usar.")
+            print(f"Carpeta raíz: {drive_service._root_folder_id}")
+            print("=========================================================")
+        else:
+            print("=========================================================")
+            print("GOOGLE DRIVE: NO configurado. Archivos se guardarán localmente.")
+            print("Para habilitar, coloque el archivo credentials.json en backend/")
+            print("=========================================================")
+    except Exception as e:
+        print(f"GOOGLE DRIVE: Error al verificar configuración: {e}")
+
     db: Session = SessionLocal()
     try:
         # Verificar si ya existe un administrador
