@@ -33,7 +33,6 @@ export default function Preinscripcion({ onBackToLogin }) {
 
   // Paso 3: Carrera y Documentos
   const [carrera, setCarrera] = useState('');
-  const [sede, setSede] = useState('');
   const [dniFrente, setDniFrente] = useState(null);
   const [dniDorso, setDniDorso] = useState(null);
   const [fotoPersona, setFotoPersona] = useState(null);
@@ -321,8 +320,8 @@ export default function Preinscripcion({ onBackToLogin }) {
     setError('');
     setSuccess('');
     
-    if (!carrera || !sede) {
-      setError('Por favor seleccione carrera/sede.');
+    if (!carrera) {
+      setError('Por favor seleccione una carrera.');
       return;
     }
 
@@ -363,7 +362,7 @@ export default function Preinscripcion({ onBackToLogin }) {
     formData.append('apellido', apellido);
     formData.append('email', email);
     formData.append('carrera', carrera);
-    formData.append('sede', sede);
+    formData.append('sede', 'Sede Los Sarmientos');
     formData.append('telefono', telefono);
     formData.append('direccion', direccion);
     formData.append('localidad', localidad);
@@ -410,12 +409,6 @@ export default function Preinscripcion({ onBackToLogin }) {
     "Sommelier",
     "Licenciatura en Turismo",
     "Licenciatura en Administracion"
-  ];
-
-  const sedesDisponibles = [
-    "Sede Centro",
-    "Sede Villa Union",
-    "Sede Los Sarmientos"
   ];
 
   return (
@@ -689,7 +682,7 @@ export default function Preinscripcion({ onBackToLogin }) {
               <FileText size={18} /> Carrera de Destino y Validación Biométrica
             </h3>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div style={{ marginBottom: '1.5rem' }}>
               <div className="form-group">
                 <label className="form-label" htmlFor="reg-carrera">Carrera a Preinscribirse *</label>
                 <select 
@@ -702,22 +695,6 @@ export default function Preinscripcion({ onBackToLogin }) {
                   <option value="">Seleccione carrera</option>
                   {carrerasDisponibles.map(c => (
                     <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="reg-sede">Sede Académica *</label>
-                <select 
-                  id="reg-sede" 
-                  className="form-control form-select" 
-                  value={sede} 
-                  onChange={(e) => setSede(e.target.value)}
-                  required
-                >
-                  <option value="">Seleccione sede</option>
-                  {sedesDisponibles.map(s => (
-                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>

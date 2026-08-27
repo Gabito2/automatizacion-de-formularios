@@ -163,6 +163,10 @@ export const adminAPI = {
     });
     return response.data;
   },
+  registrarEstudiante: async (data) => {
+    const response = await api.post('/admin/registrar-estudiante', data);
+    return response.data;
+  },
 };
 
 export default api;

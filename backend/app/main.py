@@ -62,7 +62,7 @@ def seed_admin_user():
                 activo=True,
                 primer_ingreso=False,  # No forzar cambio al admin inicial
                 carrera="Administración Central",
-                sede="Sede Centro"
+                sede="Sede Los Sarmientos"
             )
             db.add(default_admin)
             db.commit()

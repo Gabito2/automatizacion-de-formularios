@@ -366,7 +366,7 @@ def register_student(
     apellido: str = Form(...),
     email: str = Form(...),
     carrera: str = Form(...),
-    sede: str = Form(...),
+    sede: str = Form(default="Sede Los Sarmientos"),
     telefono: str = Form(...),
     direccion: str = Form(...),
     localidad: str = Form(...),

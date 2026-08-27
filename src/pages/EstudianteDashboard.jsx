@@ -309,7 +309,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
               {getBadgeEstadoGeneral()}
             </div>
             <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Sede: <strong>{user.sede || 'No especificada'}</strong>
+              Sede: <strong>Sede Los Sarmientos</strong>
             </div>
           </div>
 

@@ -42,6 +42,23 @@ export default function AdminDashboard({ user, onLogout }) {
   const [obsLoading, setObsLoading] = useState(false);
   const [obsResult, setObsResult] = useState(null);
 
+  // Sección de Registro Individual
+  const [showRegistroModal, setShowRegistroModal] = useState(false);
+  const [registroLoading, setRegistroLoading] = useState(false);
+  const [registroResult, setRegistroResult] = useState(null);
+  const [registroForm, setRegistroForm] = useState({
+    dni: '',
+    nombre: '',
+    apellido: '',
+    email: '',
+    carrera: '',
+    telefono: '',
+    direccion: '',
+    localidad: '',
+    provincia: '',
+    fecha_nacimiento: ''
+  });
+
   // Estadísticas del Dashboard
   const [stats, setStats] = useState({
     total: 0,
@@ -238,6 +255,28 @@ export default function AdminDashboard({ user, onLogout }) {
     }
   };
 
+  // Registrar estudiante individual
+  const handleRegistroIndividual = async (e) => {
+    e.preventDefault();
+    if (!registroForm.dni || !registroForm.nombre || !registroForm.apellido || !registroForm.email || !registroForm.carrera) {
+      setError('Por favor complete todos los campos obligatorios.');
+      return;
+    }
+    setRegistroLoading(true);
+    setRegistroResult(null);
+    setError('');
+    try {
+      const res = await adminAPI.registrarEstudiante(registroForm);
+      setRegistroResult(res);
+      setRegistroForm({ dni: '', nombre: '', apellido: '', email: '', carrera: '', telefono: '', direccion: '', localidad: '', provincia: '', fecha_nacimiento: '' });
+      await cargarLegajos(false);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Error al registrar el estudiante.');
+    } finally {
+      setRegistroLoading(false);
+    }
+  };
+
   const nombresDocumentos = {
     dni_frente: 'DNI Frente',
     dni_dorso: 'DNI Dorso',
@@ -351,6 +390,14 @@ export default function AdminDashboard({ user, onLogout }) {
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
             <button 
               className="btn btn-primary"
+              onClick={() => { setShowRegistroModal(true); setRegistroResult(null); setRegistroForm({ dni: '', nombre: '', apellido: '', email: '', carrera: '', telefono: '', direccion: '', localidad: '', provincia: '', fecha_nacimiento: '' }); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Users size={18} />
+              Registrar Alumno
+            </button>
+            <button 
+              className="btn btn-primary"
               onClick={() => { setShowImportPanel(!showImportPanel); setImportResult(null); }}
               style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
             >
@@ -373,7 +420,7 @@ export default function AdminDashboard({ user, onLogout }) {
           <div className="card animate-fade-in" style={{ marginBottom: '2rem', borderColor: 'var(--primary-light)' }}>
             <h3 className="card-title" style={{ fontSize: '1.15rem' }}><FileSpreadsheet size={20} /> Carga Masiva de Preinscriptos</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              Suba una base de datos en formato **CSV** o **Excel (.xlsx, .xls)**. Las columnas obligatorias requeridas son: <strong>nombre, apellido, dni, email, carrera, sede</strong>.
+              Suba una base de datos en formato **CSV** o **Excel (.xlsx, .xls)**. Las columnas obligatorias requeridas son: <strong>nombre, apellido, dni, email, carrera</strong>. La sede se asigna automáticamente como "Sede Los Sarmientos".
             </p>
 
             <form onSubmit={handleImportSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -973,6 +1020,116 @@ export default function AdminDashboard({ user, onLogout }) {
                 Confirmar y Notificar Estudiante
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA REGISTRO INDIVIDUAL DE ALUMNO */}
+      {showRegistroModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: 'rgba(15, 23, 42, 0.6)',
+          zIndex: 1000,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+          backdropFilter: 'blur(4px)'
+        }}>
+          <div className="card animate-fade-in-up" style={{ maxWidth: '600px', width: '100%', padding: '2rem', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.15rem', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Users size={20} /> Registrar Alumno Individual
+              </h3>
+              <button className="btn btn-secondary btn-sm" style={{ padding: '0.25rem' }} onClick={() => setShowRegistroModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
+              Complete los datos del estudiante. La contraseña por defecto será su número de DNI. Se enviará un correo de notificación con los datos de acceso.
+            </p>
+
+            {registroResult && (
+              <div className="alert alert-success" style={{ marginBottom: '1rem' }}>
+                <Check size={18} style={{ flexShrink: 0 }} />
+                <span>{registroResult.message}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleRegistroIndividual}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="reg-dni">DNI (sin puntos) *</label>
+                  <input id="reg-dni" type="text" className="form-control" value={registroForm.dni} onChange={(e) => setRegistroForm({ ...registroForm, dni: e.target.value.replace(/\D/g, '') })} placeholder="Ej: 45123456" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-nombre">Nombre *</label>
+                  <input id="reg-nombre" type="text" className="form-control" value={registroForm.nombre} onChange={(e) => setRegistroForm({ ...registroForm, nombre: e.target.value })} placeholder="Ej: Juan" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-apellido">Apellido *</label>
+                  <input id="reg-apellido" type="text" className="form-control" value={registroForm.apellido} onChange={(e) => setRegistroForm({ ...registroForm, apellido: e.target.value })} placeholder="Ej: Perez" required />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="reg-email">Correo Electrónico *</label>
+                  <input id="reg-email" type="email" className="form-control" value={registroForm.email} onChange={(e) => setRegistroForm({ ...registroForm, email: e.target.value })} placeholder="Ej: juan.perez@correo.com" required />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="reg-carrera">Carrera *</label>
+                  <select id="reg-carrera" className="form-control form-select" value={registroForm.carrera} onChange={(e) => setRegistroForm({ ...registroForm, carrera: e.target.value })} required>
+                    <option value="">Seleccione carrera</option>
+                    <option value="Ingenieria en Sistemas">Ingenieria en Sistemas</option>
+                    <option value="Licenciatura en Educacion">Licenciatura en Educacion</option>
+                    <option value="Abogacia">Abogacia</option>
+                    <option value="Sommelier">Sommelier</option>
+                    <option value="Licenciatura en Turismo">Licenciatura en Turismo</option>
+                    <option value="Licenciatura en Administracion">Licenciatura en Administracion</option>
+                  </select>
+                </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '1.25rem 0' }} />
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem', fontStyle: 'italic' }}>
+                Los campos siguientes son opcionales. El estudiante podrá completarlos después desde su panel.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-telefono">Teléfono</label>
+                  <input id="reg-telefono" type="tel" className="form-control" value={registroForm.telefono} onChange={(e) => setRegistroForm({ ...registroForm, telefono: e.target.value })} placeholder="Ej: 3825123456" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-fecha-nac">Fecha de Nacimiento</label>
+                  <input id="reg-fecha-nac" type="date" className="form-control" value={registroForm.fecha_nacimiento} onChange={(e) => setRegistroForm({ ...registroForm, fecha_nacimiento: e.target.value })} />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="reg-direccion">Domicilio</label>
+                  <input id="reg-direccion" type="text" className="form-control" value={registroForm.direccion} onChange={(e) => setRegistroForm({ ...registroForm, direccion: e.target.value })} placeholder="Ej: Av. Principal 123" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-localidad">Localidad</label>
+                  <input id="reg-localidad" type="text" className="form-control" value={registroForm.localidad} onChange={(e) => setRegistroForm({ ...registroForm, localidad: e.target.value })} placeholder="Ej: Chilecito" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="reg-provincia">Provincia</label>
+                  <input id="reg-provincia" type="text" className="form-control" value={registroForm.provincia} onChange={(e) => setRegistroForm({ ...registroForm, provincia: e.target.value })} placeholder="Ej: La Rioja" />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.5rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowRegistroModal(false)}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={registroLoading} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {registroLoading ? <div className="spinner" /> : <><Check size={16} /> Registrar Alumno</>}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

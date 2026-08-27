@@ -25,6 +25,101 @@ class ObservacionMasivaSchema(BaseModel):
     destino: str  # "todos", "deudores", "especifico"
     usuario_id: int | None = None  # Solo requerido cuando destino == "especifico"
 
+class RegistroIndividualSchema(BaseModel):
+    dni: str
+    nombre: str
+    apellido: str
+    email: str
+    carrera: str
+    telefono: str | None = None
+    direccion: str | None = None
+    localidad: str | None = None
+    provincia: str | None = None
+    fecha_nacimiento: str | None = None
+
+@router.post("/registrar-estudiante")
+def registrar_estudiante_individual(
+    data: RegistroIndividualSchema,
+    background_tasks: BackgroundTasks,
+    current_admin: Usuario = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Registra un estudiante de forma individual desde el panel de administración.
+    La contraseña por defecto es el DNI del estudiante.
+    """
+    # Validar DNI
+    dni_limpio = re.sub(r'\D', '', data.dni)
+    if not dni_limpio:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El DNI ingresado no es válido."
+        )
+
+    # Verificar si el DNI ya existe
+    existing_user = db.query(Usuario).filter(Usuario.dni == dni_limpio).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El número de DNI ingresado ya se encuentra registrado."
+        )
+
+    # Verificar si el email ya está en uso
+    existing_email = db.query(Usuario).filter(Usuario.email == data.email.strip()).first()
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo electrónico ingresado ya se encuentra registrado."
+        )
+
+    # Crear usuario
+    temp_pass = dni_limpio
+    new_user = Usuario(
+        dni=dni_limpio,
+        nombre=data.nombre.strip(),
+        apellido=data.apellido.strip(),
+        email=data.email.strip(),
+        password_hash=get_password_hash(temp_pass),
+        rol="estudiante",
+        activo=True,
+        primer_ingreso=False,
+        carrera=data.carrera.strip(),
+        sede="Sede Los Sarmientos"
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    # Crear datos personales si se proporcionaron
+    if data.telefono or data.direccion or data.localidad:
+        datos_pers = DatosPersonales(
+            usuario_id=new_user.id,
+            telefono=data.telefono,
+            direccion=data.direccion,
+            localidad=data.localidad,
+            provincia=data.provincia,
+            fecha_nacimiento=data.fecha_nacimiento,
+            secundario_completo=False,
+            titulo_secundario=""
+        )
+        db.add(datos_pers)
+        db.commit()
+
+    # Enviar correo de notificación
+    EmailService.send_account_created(
+        background_tasks=background_tasks,
+        to_email=data.email.strip(),
+        nombre=f"{data.nombre.strip()} {data.apellido.strip()}",
+        dni=dni_limpio,
+        temp_password=temp_pass
+    )
+
+    return {
+        "message": f"Estudiante {data.nombre} {data.apellido} registrado exitosamente. La contraseña por defecto es el DNI: {dni_limpio}",
+        "usuario_id": new_user.id
+    }
+
+
 @router.post("/importar-estudiantes")
 def importar_estudiantes(
     background_tasks: BackgroundTasks,
@@ -64,7 +159,7 @@ def importar_estudiantes(
         )
         
     # Validar columnas requeridas
-    required_cols = {"nombre", "apellido", "dni", "email", "carrera", "sede"}
+    required_cols = {"nombre", "apellido", "dni", "email", "carrera"}
     df.columns = [col.lower().strip() for col in df.columns]
     
     missing_cols = required_cols - set(df.columns)
@@ -95,7 +190,7 @@ def importar_estudiantes(
             nombre = str(row['nombre']).strip()
             apellido = str(row['apellido']).strip()
             carrera = str(row['carrera']).strip()
-            sede = str(row['sede']).strip()
+            sede = "Sede Los Sarmientos"
 
             if not dni or not email or not nombre or not apellido:
                 errores.append(f"Fila {idx+2}: Faltan campos obligatorios (DNI, Nombre, Apellido, Email).")
