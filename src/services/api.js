@@ -6,6 +6,29 @@ const api = axios.create({
   baseURL: API_URL,
 });
 
+/**
+ * Resuelve la URL de un archivo.
+ * - Si es una URL de Drive (https://...), la retorna tal cual
+ * - Si es una ruta relativa (legajos/...), la construye con API_URL
+ */
+export const getFileUrl = (archivoUrl) => {
+  if (!archivoUrl) return '';
+  // Si ya es una URL completa (Drive u otro dominio)
+  if (archivoUrl.startsWith('http://') || archivoUrl.startsWith('https://')) {
+    return archivoUrl;
+  }
+  // Si es una ruta relativa (legacy/local)
+  return `${API_URL}/${archivoUrl}`;
+};
+
+/**
+ * Verifica si una URL es de Google Drive
+ */
+export const isDriveUrl = (archivoUrl) => {
+  if (!archivoUrl) return false;
+  return archivoUrl.includes('drive.google.com');
+};
+
 // Interceptor para inyectar automáticamente el Token JWT
 api.interceptors.request.use(
   (config) => {
@@ -145,6 +168,10 @@ export const adminAPI = {
   },
   getLegajos: async (filters = {}) => {
     const response = await api.get('/admin/legajos', { params: filters });
+    return response.data;
+  },
+  getStats: async () => {
+    const response = await api.get('/admin/stats');
     return response.data;
   },
   aprobarDocumento: async (id) => {

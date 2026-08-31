@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, s
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from sqlalchemy.orm import joinedload
 from app.database import get_db
 from app.models.models import Usuario, DatosPersonales, Documento, Observacion
 from app.utils.dependencies import get_current_student
@@ -349,7 +350,12 @@ def get_estado_legajo(
     Obtiene el estado de carga documental, las observaciones activas y el
     estado general del trámite del estudiante preinscripto.
     """
-    docs = db.query(Documento).filter(Documento.usuario_id == current_student.id).all()
+    docs = (
+        db.query(Documento)
+        .filter(Documento.usuario_id == current_student.id)
+        .options(joinedload(Documento.observaciones))
+        .all()
+    )
     
     # Documentos obligatorios del legajo
     tipos_obligatorios = [
@@ -399,18 +405,26 @@ def get_estado_legajo(
     else:
         estado_general = "aprobado"
         
-    # Obtener observaciones de documentos + observaciones generales del admin
-    historial_obs_docs = db.query(Observacion).join(Documento).filter(
-        Documento.usuario_id == current_student.id
-    ).all()
+    # Obtener observaciones de documentos (ligadas al estudiante)
+    obs_docs = (
+        db.query(Observacion)
+        .join(Documento, Observacion.documento_id == Documento.id)
+        .filter(Documento.usuario_id == current_student.id)
+        .all()
+    )
 
-    historial_obs_generales = db.query(Observacion).filter(
-        Observacion.usuario_id == current_student.id,
-        Observacion.documento_id == None
-    ).all()
+    # Obtener observaciones generales del admin (no ligadas a ningún documento)
+    obs_generales = (
+        db.query(Observacion)
+        .filter(
+            Observacion.usuario_id == current_student.id,
+            Observacion.documento_id == None
+        )
+        .all()
+    )
 
     # Unificar y ordenar por fecha descendente
-    todas_observaciones = historial_obs_docs + historial_obs_generales
+    todas_observaciones = obs_docs + obs_generales
     todas_observaciones.sort(key=lambda o: o.fecha or datetime.min, reverse=True)
 
     reporte_observaciones = []

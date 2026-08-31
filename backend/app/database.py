@@ -10,7 +10,10 @@ DATABASE_URL = "sqlite:///" + os.path.join(_BACKEND_DIR, "..", "legajos.db").rep
 
 # Crear motor de base de datos con pragmas de rendimiento para SQLite
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    pool_size=5,
+    max_overflow=10,
 )
 
 # --- Tuning de SQLite para rendimiento ---

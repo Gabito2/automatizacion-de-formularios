@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from sqlalchemy.orm import joinedload
 from app.database import get_db
 from app.models.models import Usuario, DatosPersonales, Documento, Observacion
 from app.utils.dependencies import get_current_admin, get_current_validator
@@ -87,10 +88,8 @@ def registrar_estudiante_individual(
         sede="Sede Los Sarmientos"
     )
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
 
-    # Crear datos personales si se proporcionaron
+    # Crear datos personales si se proporcionaron (en la misma transacción)
     if data.telefono or data.direccion or data.localidad:
         datos_pers = DatosPersonales(
             usuario_id=new_user.id,
@@ -103,7 +102,9 @@ def registrar_estudiante_individual(
             titulo_secundario=""
         )
         db.add(datos_pers)
-        db.commit()
+
+    db.commit()
+    db.refresh(new_user)
 
     # Enviar correo de notificación
     EmailService.send_account_created(
@@ -256,6 +257,57 @@ def importar_estudiantes(
         "errores": errores
     }
 
+@router.get("/stats")
+def get_stats(
+    current_validator: Usuario = Depends(get_current_validator),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna estadísticas globales del dashboard (total, aprobados, observados, pendientes, incompletos)
+    en una sola query. Evita que el frontend haga una segunda llamada a /legajos sin filtros.
+    """
+    # Obtener todos los estudiantes con documentos eager-loaded
+    students = (
+        db.query(Usuario)
+        .options(joinedload(Usuario.documentos))
+        .filter(Usuario.rol == "estudiante")
+        .all()
+    )
+    
+    tipos_obligatorios = [
+        "dni_frente", "dni_dorso", "foto_4x4",
+        "analitico_secundario", "partida_nacimiento", "formulario_inscripcion"
+    ]
+    
+    total = len(students)
+    aprobados = 0
+    observados = 0
+    pendientes = 0
+    incompletos = 0
+    
+    for s in students:
+        docs = s.documentos
+        docs_uploaded = {doc.tipo_documento for doc in docs}
+        todo_subido = all(t in docs_uploaded for t in tipos_obligatorios)
+        estados_cargados = [doc.estado for doc in docs]
+        
+        if "rechazado" in estados_cargados or "observado" in estados_cargados:
+            observados += 1
+        elif not todo_subido:
+            incompletos += 1
+        elif "pendiente" in estados_cargados:
+            pendientes += 1
+        else:
+            aprobados += 1
+    
+    return {
+        "total": total,
+        "aprobados": aprobados,
+        "observados": observados,
+        "pendientes": pendientes,
+        "incompletos": incompletos
+    }
+
 @router.get("/legajos")
 def get_legajos(
     carrera: str = None,
@@ -268,8 +320,12 @@ def get_legajos(
     Obtiene el listado de legajos de estudiantes con filtros avanzados.
     Permite filtrar por carrera, estado general y búsqueda libre (DNI, nombre o apellido).
     """
-    # Consulta base para estudiantes
-    q = db.query(Usuario).filter(Usuario.rol == "estudiante")
+    # Consulta base para estudiantes con eager loading de documentos y datos_personales
+    q = (
+        db.query(Usuario)
+        .options(joinedload(Usuario.documentos), joinedload(Usuario.datos_personales))
+        .filter(Usuario.rol == "estudiante")
+    )
     
     if carrera:
         q = q.filter(Usuario.carrera == carrera)

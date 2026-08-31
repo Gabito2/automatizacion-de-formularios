@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { adminAPI, API_URL } from '../services/api';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { adminAPI, API_URL, getFileUrl } from '../services/api';
 import {
   FileSpreadsheet, Users, FileCheck, FileWarning, Search,
   Filter, Check, X, Eye, LogOut,
@@ -78,19 +78,13 @@ export default function AdminDashboard({ user, onLogout }) {
       if (filtroEstado) filters.estado = filtroEstado;
       if (filtroQuery) filters.query = filtroQuery;
       
-      const data = await adminAPI.getLegajos(filters);
+      // Una sola llamada para legajos + stats en paralelo
+      const [data, statsData] = await Promise.all([
+        adminAPI.getLegajos(filters),
+        adminAPI.getStats()
+      ]);
       setLegajos(data);
-      
-      // Calcular estadísticas de la lista actual/total sin filtros
-      // Para estadísticas reales, cargamos sin filtros
-      const allData = await adminAPI.getLegajos();
-      const total = allData.length;
-      const aprobados = allData.filter(l => l.estado_general === 'aprobado').length;
-      const observados = allData.filter(l => l.estado_general === 'observado').length;
-      const pendientes = allData.filter(l => l.estado_general === 'pendiente').length;
-      const incompletos = allData.filter(l => l.estado_general === 'incompleto').length;
-      
-      setStats({ total, aprobados, observados, pendientes, incompletos });
+      setStats(statsData);
     } catch {
       setError('Error al obtener la lista de legajos.');
     } finally {
@@ -101,8 +95,20 @@ export default function AdminDashboard({ user, onLogout }) {
     cargarLegajos(false);
   }, [filtroCarrera, filtroEstado]);
 
+  // Debounce para búsqueda de texto (evita refetch en cada keystroke)
+  const debounceTimer = useRef(null);
+  const handleQueryChange = useCallback((e) => {
+    const val = e.target.value;
+    setFiltroQuery(val);
+    clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      cargarLegajos(false);
+    }, 400);
+  }, [filtroCarrera, filtroEstado]);
+
   const handleSearchSubmit = (e) => {
     e.preventDefault();
+    clearTimeout(debounceTimer.current);
     cargarLegajos(false);
   };
 
@@ -127,7 +133,7 @@ export default function AdminDashboard({ user, onLogout }) {
   };
 
   // Aprobar un documento
-  const handleAprobarDoc = async (docId) => {
+  const handleAprobarDoc = useCallback(async (docId) => {
     setVerificandoLoading(true);
     setError('');
     try {
@@ -180,16 +186,16 @@ export default function AdminDashboard({ user, onLogout }) {
     } finally {
       setVerificandoLoading(false);
     }
-  };
+  }, [selectedStudent, activeDocPreview]);
 
   // Rechazar un documento (abre modal)
-  const handleRechazarClick = (doc) => {
+  const handleRechazarClick = useCallback((doc) => {
     setDocToRechazar(doc);
     setMensajeRechazo('');
     setShowRechazoModal(true);
-  };
+  }, []);
 
-  const handleConfirmRechazo = async () => {
+  const handleConfirmRechazo = useCallback(async () => {
     if (!mensajeRechazo) return;
     
     setVerificandoLoading(true);
@@ -228,10 +234,10 @@ export default function AdminDashboard({ user, onLogout }) {
     } finally {
       setVerificandoLoading(false);
     }
-  };
+  }, [docToRechazar, mensajeRechazo, selectedStudent, activeDocPreview]);
 
   // Enviar observación masiva
-  const handleEnviarObservacion = async () => {
+  const handleEnviarObservacion = useCallback(async () => {
     if (!obsMensaje.trim()) return;
     if (obsDestino === 'especifico' && !obsUsuarioId) return;
 
@@ -253,10 +259,10 @@ export default function AdminDashboard({ user, onLogout }) {
     } finally {
       setObsLoading(false);
     }
-  };
+  }, [obsMensaje, obsDestino, obsUsuarioId]);
 
   // Registrar estudiante individual
-  const handleRegistroIndividual = async (e) => {
+  const handleRegistroIndividual = useCallback(async (e) => {
     e.preventDefault();
     if (!registroForm.dni || !registroForm.nombre || !registroForm.apellido || !registroForm.email || !registroForm.carrera) {
       setError('Por favor complete todos los campos obligatorios.');
@@ -275,7 +281,7 @@ export default function AdminDashboard({ user, onLogout }) {
     } finally {
       setRegistroLoading(false);
     }
-  };
+  }, [registroForm]);
 
   const nombresDocumentos = {
     dni_frente: 'DNI Frente',
@@ -321,8 +327,11 @@ export default function AdminDashboard({ user, onLogout }) {
     }
   };
 
-  // Obtener lista única de carreras para filtros
-  const carrerasDisponibles = Array.from(new Set(legajos.map(l => l.carrera).filter(Boolean)));
+  // Obtener lista única de carreras para filtros (memoizada)
+  const carrerasDisponibles = useMemo(
+    () => Array.from(new Set(legajos.map(l => l.carrera).filter(Boolean))),
+    [legajos]
+  );
 
   return (
     <div className="layout-container">
@@ -503,7 +512,7 @@ export default function AdminDashboard({ user, onLogout }) {
                   style={{ paddingLeft: '2.5rem' }} 
                   placeholder="Buscar por DNI o Nombre..."
                   value={filtroQuery}
-                  onChange={(e) => setFiltroQuery(e.target.value)}
+                  onChange={handleQueryChange}
                 />
               </div>
 
@@ -719,7 +728,7 @@ export default function AdminDashboard({ user, onLogout }) {
                         <FileText size={48} style={{ color: 'var(--text-muted)', margin: '0 auto 0.5rem auto' }} />
                         <p style={{ fontSize: '0.8rem', fontWeight: 600 }}>Archivo en Formato PDF</p>
                         <a 
-                          href={`${API_URL}/${activeDocPreview.archivo_url}`} 
+                          href={getFileUrl(activeDocPreview.archivo_url)} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="btn btn-secondary btn-sm"
@@ -730,7 +739,7 @@ export default function AdminDashboard({ user, onLogout }) {
                       </div>
                     ) : (
                       <img 
-                        src={`${API_URL}/${activeDocPreview.archivo_url}`} 
+                        src={getFileUrl(activeDocPreview.archivo_url)} 
                         alt={nombresDocumentos[activeDocPreview.tipo_documento]} 
                         style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
                       />

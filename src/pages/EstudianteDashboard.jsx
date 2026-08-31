@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { estudianteAPI, API_URL } from '../services/api';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { estudianteAPI, API_URL, getFileUrl } from '../services/api';
 import CameraCapture from '../components/CameraCapture';
 import { 
   User, FileText, AlertCircle, CheckCircle2, 
@@ -56,7 +56,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     setCorrigiendoDatosDni(true);
   };
 
-  const handleCorregirDatosDni = async (e) => {
+  const handleCorregirDatosDni = useCallback(async (e) => {
     e.preventDefault();
     if (!formDni || !formNombre || !formApellido || !formFechaNac) {
       setCorrectionError('Por favor complete todos los campos de identidad.');
@@ -101,10 +101,10 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     } finally {
       setActualizandoDatosDniLoading(false);
     }
-  };
+  }, [formDni, formNombre, formApellido, formFechaNac, user, onUpdateUser]);
 
-  // Cargar estado inicial
-  const cargarInformacion = async () => {
+  // Cargar estado inicial (memoized)
+  const cargarInformacion = useCallback(async () => {
     setLoading(true);
     setGeneralError('');
     try {
@@ -131,14 +131,14 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     cargarInformacion();
-  }, []);
+  }, [cargarInformacion]);
 
   // Guardar datos personales
-  const handleSaveProfile = async (e) => {
+  const handleSaveProfile = useCallback(async (e) => {
     e.preventDefault();
     if (!telefono || !direccion || !localidad || !provincia || !fechaNacimiento || !tituloSecundario) {
       setGeneralError('Por favor complete todos los campos obligatorios del formulario.');
@@ -166,10 +166,10 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     } catch {
       setGeneralError('Ocurrió un error al guardar sus datos personales.');
     }
-  };
+  }, [telefono, direccion, localidad, provincia, fechaNacimiento, secundarioCompleto, tituloSecundario]);
 
   // Subir un documento
-  const handleFileUpload = async (tipo_documento, e) => {
+  const handleFileUpload = useCallback(async (tipo_documento, e) => {
     const file = e.target.files[0];
     if (!file) return;
     
@@ -211,10 +211,10 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     } finally {
       setSubiendoDoc(null);
     }
-  };
+  }, [profileCompleted]);
 
   // Subir documento capturado desde cámara
-  const handleCamaraUpload = async (blob, dataUrl, tipo_documento) => {
+  const handleCamaraUpload = useCallback(async (blob, dataUrl, tipo_documento) => {
     setCamaraDocumento(null);
     setSubiendoDoc(tipo_documento);
     setOcrFeedback(null);
@@ -235,7 +235,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     } finally {
       setSubiendoDoc(null);
     }
-  };
+  }, []);
 
   const nombresDocumentos = {
     dni_frente: 'DNI Frente',
@@ -255,8 +255,8 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
     formulario_inscripcion: 'Planilla de preinscripción provista por el sistema SIU.'
   };
 
-  // Renderizador de estado general en UI
-  const getBadgeEstadoGeneral = () => {
+  // Renderizador de estado general en UI (memoized)
+  const getBadgeEstadoGeneral = useMemo(() => {
     switch (estadoGeneral) {
       case 'aprobado':
         return <span className="badge badge-aprobado"><CheckCircle2 size={14} /> Legajo Aprobado</span>;
@@ -267,7 +267,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
       default:
         return <span className="badge badge-incompleto"><HelpCircle size={14} /> Documentación Incompleta</span>;
     }
-  };
+  }, [estadoGeneral]);
 
   if (loading && documentos.length === 0) {
     return (
@@ -306,7 +306,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
               Estado del Trámite
             </h4>
             <div style={{ marginTop: '0.5rem', display: 'flex' }}>
-              {getBadgeEstadoGeneral()}
+              {getBadgeEstadoGeneral}
             </div>
             <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               Sede: <strong>Sede Los Sarmientos</strong>
@@ -645,7 +645,7 @@ export default function EstudianteDashboard({ user, onLogout, onUpdateUser }) {
                                 {esObs && <span style={{ color: 'var(--warning)', fontWeight: 700 }}>⚠ Observado</span>}
                                 
                                 <a 
-                                  href={`${API_URL}/${doc.archivo_url}`} 
+                                  href={getFileUrl(doc.archivo_url)} 
                                   target="_blank" 
                                   rel="noopener noreferrer"
                                   className="btn btn-secondary btn-sm"
