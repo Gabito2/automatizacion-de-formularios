@@ -88,6 +88,7 @@ def registrar_estudiante_individual(
         sede="Sede Los Sarmientos"
     )
     db.add(new_user)
+    db.flush()
 
     # Crear datos personales si se proporcionaron (en la misma transacción)
     if data.telefono or data.direccion or data.localidad:
