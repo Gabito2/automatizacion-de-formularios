@@ -2,6 +2,9 @@ import os
 import re
 import shutil
 import tempfile
+import hashlib
+import threading
+import time
 import cv2
 import numpy as np
 import logging
@@ -280,6 +283,56 @@ def _apply_digit_correction_to_text(text: str) -> str:
         else:
             corrected_tokens.append(token)
     return ''.join(corrected_tokens)
+
+
+# ── Caché en memoria de resultados OCR ──────────────────────────────────────
+# El frontend pre-analiza el DNI (/auth/analizar-dni, /auth/analizar-dni-camara,
+# /auth/analizar-archivo-compuesto) y luego /auth/register vuelve a correr la
+# extracción sobre el MISMO archivo → doble espera por formulario. Esta caché
+# (en proceso, por SHA-256 del CONTENIDO) reutiliza el resultado si los bytes
+# son idénticos, de modo que la segunda llamada devuelve al instante. No debilita
+# la validación: el texto reutilizado es exactamente el que produjo el motor.
+_OCR_CACHE_TTL_SECONDS = 600
+_OCR_CACHE_MAX_ENTRIES = 128
+
+_ocr_cache: dict = {}
+_ocr_cache_lock = threading.Lock()
+
+
+def _ocr_file_sha256(file_path: str) -> str:
+    """SHA-256 del contenido de un archivo (clave de la caché)."""
+    h = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(256 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _ocr_cache_get(file_path: str) -> dict | None:
+    """Retorna {"text", "report"} si existe una extracción previa del MISMO contenido."""
+    if not os.path.isfile(file_path):
+        return None
+    key = _ocr_file_sha256(file_path)
+    with _ocr_cache_lock:
+        item = _ocr_cache.get(key)
+        if item is None:
+            return None
+        if item["ts"] < time.time() - _OCR_CACHE_TTL_SECONDS:
+            del _ocr_cache[key]
+            return None
+        return item["value"]
+
+
+def _ocr_cache_set(file_path: str, text: str, report: dict) -> None:
+    if not os.path.isfile(file_path):
+        return
+    key = _ocr_file_sha256(file_path)
+    with _ocr_cache_lock:
+        # Expulsión simple de la entrada más antigua cuando el cache está lleno
+        if len(_ocr_cache) >= _OCR_CACHE_MAX_ENTRIES:
+            oldest = min(_ocr_cache, key=lambda k: _ocr_cache[k]["ts"])
+            del _ocr_cache[oldest]
+        _ocr_cache[key] = {"ts": time.time(), "value": {"text": text, "report": report}}
 
 
 class OCRService:
@@ -658,6 +711,18 @@ class OCRService:
         Extrae texto de una sola imagen (sin conversión PDF).
         Retorna (extracted_text, quality_report).
         """
+        cached = _ocr_cache_get(image_path)
+        if cached is not None:
+            logger.info("[OCR Cache] Hit en _extract_from_single_image: reutilizando OCR de la imagen.")
+            return cached["text"], cached["report"]
+
+        text, report = OCRService._extract_from_single_image_uncached(image_path)
+
+        _ocr_cache_set(image_path, text, report)
+        return text, report
+
+    @staticmethod
+    def _extract_from_single_image_uncached(image_path: str) -> tuple[str, dict]:
         processed_img, quality_report = OCRService.preprocess_image(image_path)
         all_results = OCRService._run_all_engines(image_path, processed_img)
 
@@ -685,6 +750,18 @@ class OCRService:
         - Sin voting entre motores
         Retorna (extracted_text, quality_report).
         """
+        cached = _ocr_cache_get(file_path)
+        if cached is not None:
+            logger.info("[OCR Cache] Hit en extract_text_fast: reutilizando extracción previa del archivo.")
+            return cached["text"], cached["report"]
+
+        text, report = OCRService._extract_text_fast_uncached(file_path)
+
+        _ocr_cache_set(file_path, text, report)
+        return text, report
+
+    @staticmethod
+    def _extract_text_fast_uncached(file_path: str) -> tuple[str, dict]:
         try:
             _, ext = os.path.splitext(file_path)
             ext = ext.lower()
@@ -744,6 +821,18 @@ class OCRService:
 
         Retorna (extracted_text, quality_report).
         """
+        cached = _ocr_cache_get(file_path)
+        if cached is not None:
+            logger.info("[OCR Cache] Hit en extract_text: reutilizando extracción previa del archivo.")
+            return cached["text"], cached["report"]
+
+        text, report = OCRService._extract_text_uncached(file_path, user_info)
+
+        _ocr_cache_set(file_path, text, report)
+        return text, report
+
+    @staticmethod
+    def _extract_text_uncached(file_path: str, user_info: dict = None) -> tuple[str, dict]:
         try:
             _, ext = os.path.splitext(file_path)
             ext = ext.lower()
